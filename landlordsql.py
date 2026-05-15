@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -14,36 +15,35 @@ if 'logged_in' not in st.session_state:
         'current_page': "Dashboard", 'user_name': None, 'sel_owner': "All Owners"
     })
 
-# --- 2. DATABASE CONFIGURATION ---
+# --- 2. DATABASE CONFIGURATION (FORCE-FORMAT VERSION) ---
 try:
-    # Scrubbing helper to remove accidental spaces/quotes
     def scrub(key):
         return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
 
-    U = scrub("DB_USER")
+    RAW_ID = scrub("DB_USER")
     P = scrub("DB_PASS")
     H = scrub("DB_HOST")
     PORT = scrub("DB_PORT")
     DB = scrub("DB_NAME")
     
-    # --- THE CRITICAL FIX ---
-    # If the dot is missing, we force it. 
-    # This turns 'postgresdcgo...' into 'postgres.dcgo...'
-    if "postgres" in U and "." not in U:
-        U = U.replace("postgres", "postgres.")
+    # --- THE FORCE-FORMAT FIX ---
+    # We ignore what's in the secret and FORCE the 'postgres.ID' structure
+    # If the secret already has 'postgres.', we clean it first
+    clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
+    U = f"postgres.{clean_id}"
     
     # Construct connection string
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
     
-    # This will now show the DOT in your sidebar to confirm it's fixed
-    st.sidebar.success(f"✔️ Connected to: {U}")
+    # Sidebar Success Message
+    st.sidebar.success(f"✔️ Authenticated as: {U}")
 
 except Exception as e:
-    st.error("🚨 Configuration Error: Check your Streamlit Secrets names.")
+    st.error("🚨 Configuration Error: Check your Streamlit Secrets.")
     st.stop()
 
-# --- 3. APP CONFIG ---
+# --- 3. APP CONFIG & PDF ---
 st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
@@ -52,25 +52,24 @@ except ImportError:
     FPDF = None
 
 # --- 4. DATABASE FUNCTIONS ---
+
 def load_users():
     try:
         return pd.read_sql("SELECT * FROM users", engine)
     except Exception as e:
-        err_str = str(e).lower()
-        # If the table doesn't exist yet, create it
-        if "does not exist" in err_str:
+        if "does not exist" in str(e).lower():
             admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
             df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
             try:
                 df_init.to_sql("users", engine, if_exists="replace", index=False)
                 return df_init
-            except Exception as sql_err:
-                st.error("🚨 Database Write Error")
-                st.code(str(sql_err))
+            except Exception as sql_e:
+                st.error("🚨 Database Write Error.")
+                st.code(str(sql_e))
                 st.stop()
         else:
-            st.error("🚨 Supabase Connection Refused")
-            st.info("Check your DB_PASS in Secrets. The username is now fixed by the code.")
+            st.error("🚨 Supabase Connection Rejected")
+            st.info(f"The server rejected username: {U}. Ensure your Project ID in Secrets is correct.")
             st.code(str(e))
             st.stop()
 
@@ -123,8 +122,11 @@ def gen_p(df, title):
             txt = f"{v:,.2f}" if isinstance(v, (float, int)) else str(v)[:14]
             pdf.cell(30, 10, txt, 1)
         pdf.ln()
-    try: return pdf.output(dest='S').encode('latin-1')
-    except: return pdf.output()
+    try:
+        # Modern fpdf2/fpdf compatibility
+        return pdf.output(dest='S').encode('latin-1')
+    except:
+        return pdf.output()
 
 # --- 5. LOGIN ---
 if not st.session_state['logged_in']:
@@ -133,32 +135,39 @@ if not st.session_state['logged_in']:
         if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
         st.title("🔐 Executive Login")
     u_df = load_users()
-    with st.form("l"):
+    with st.form("login"):
         un, pw = st.text_input("Username"), st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
             hp = hashlib.sha256(pw.encode()).hexdigest()
             row = u_df[(u_df['username'] == un) & (u_df['password'] == hp)]
             if not row.empty:
-                st.session_state.update({'logged_in': True, 'user_role': row.iloc[0]['role'], 'assigned_owner': row.iloc[0]['owner_name'], 'user_name': un, 'sel_owner': row.iloc[0]['owner_name'] if row.iloc[0]['role'] == 'landlord' else "All Owners"})
+                st.session_state.update({
+                    'logged_in': True, 'user_role': row.iloc[0]['role'], 
+                    'assigned_owner': row.iloc[0]['owner_name'], 'user_name': un,
+                    'sel_owner': row.iloc[0]['owner_name'] if row.iloc[0]['role'] == 'landlord' else "All Owners"
+                })
                 st.rerun()
             else: st.error("Access Denied")
     st.stop()
 
 # --- 6. NAVIGATION ---
 raw_df = load_master_data()
+
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     st.title(f"👤 {st.session_state['user_name']}")
+    
     if st.session_state['user_role'] == 'admin':
         with st.expander("📂 Data Sync"):
             up = st.file_uploader("Upload CSV", type="csv")
             md = "replace" if st.radio("Mode", ["Overwrite", "Append"]) == "Overwrite" else "append"
             if up and st.button("Sync Now"): update_database(up, md); st.rerun()
     
-    if st.button("📊 Dashboard", use_container_width=True): st.session_state['current_page'] = "Dashboard"
-    if st.button("📈 Analytics", use_container_width=True): st.session_state['current_page'] = "Analytics"
-    if st.button("🛠️ Meters", use_container_width=True): st.session_state['current_page'] = "Management"
-    if st.session_state['user_role'] == 'admin' and st.button("👥 Users", use_container_width=True): st.session_state['current_page'] = "UserAdmin"
+    st.button("📊 Dashboard", on_click=lambda: st.session_state.update({'current_page': 'Dashboard'}), use_container_width=True)
+    st.button("📈 Analytics", on_click=lambda: st.session_state.update({'current_page': 'Analytics'}), use_container_width=True)
+    st.button("🛠️ Meters", on_click=lambda: st.session_state.update({'current_page': 'Management'}), use_container_width=True)
+    if st.session_state['user_role'] == 'admin':
+        st.button("👥 Users", on_click=lambda: st.session_state.update({'current_page': 'UserAdmin'}), use_container_width=True)
     
     st.divider()
     if not raw_df.empty and st.session_state['user_role'] == 'admin':
@@ -175,31 +184,42 @@ if st.session_state['current_page'] == "Dashboard":
         st.title(f"🏢 {st.session_state['sel_owner']}")
         sb = st.multiselect("Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
         fdf = working_df[working_df['Building Detail'].isin(sb)]
+        
         if not fdf.empty:
+            # 1. BREAKDOWN (FIRST)
             st.subheader("📋 Monthly Breakdown")
             summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters'})
             st.dataframe(summary.style.format("R {:,.2f}", subset=['Sales']), use_container_width=True)
+            
             c1, c2 = st.columns(2)
             with c1:
                 xl = io.BytesIO()
                 with pd.ExcelWriter(xl) as wr: summary.to_excel(wr)
-                st.download_button("📥 Excel", xl.getvalue(), "Statement.xlsx")
+                st.download_button("📥 Excel Export", xl.getvalue(), "Statement.xlsx")
             with c2:
                 if FPDF:
-                    sel_m = st.selectbox("Month", sorted(fdf['Display_Month'].unique()))
-                    if st.button("📥 PDF"):
+                    ex_m = sorted(fdf['Display_Month'].unique())
+                    sel_m = st.selectbox("Select Month for PDF", ex_m)
+                    if st.button("📥 Generate PDF"):
                         m_data = fdf[fdf['Display_Month'] == sel_m].groupby('Building Detail').agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum'})
                         st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
+
             st.divider()
-            st.subheader("🏆 Top 10 Transactions")
+            # 2. TOP 10 (SECOND)
+            st.subheader("🏆 Top 10 Highest Transactions")
             st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
+
             st.divider()
+            # 3. TREND (THIRD)
             st.subheader("📈 Performance Trend")
             st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
+
             st.divider()
-            st.subheader("🔎 Search All Transactions")
-            q = st.text_input("Filter results...")
+            # 4. SEARCH (LAST - SHOWS ALL)
+            st.subheader("🔎 Search & All Transactions")
+            q = st.text_input("Filter through all records...")
             res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
+            st.write(f"Showing {len(res)} matching records:")
             st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
@@ -216,7 +236,7 @@ elif st.session_state['current_page'] == "UserAdmin":
     t1, t2 = st.tabs(["Add Landlord", "Reset Passwords"])
     with t1:
         with st.form("cu"):
-            nu, np = st.text_input("Username"), st.text_input("Password", type="password")
+            nu, np = st.text_input("New Username"), st.text_input("Password", type="password")
             no = st.selectbox("Assign Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
             if st.form_submit_button("Create Account"): save_user(nu, np, "landlord", no); st.rerun()
     with t2:
@@ -226,6 +246,6 @@ elif st.session_state['current_page'] == "UserAdmin":
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Lookup")
-    m_no = st.text_input("Search Meter Number")
+    m_no = st.text_input("Enter Meter Number")
     if m_no:
         st.dataframe(working_df[working_df['Meter_Search'].str.contains(m_no)], use_container_width=True)
