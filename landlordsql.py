@@ -102,14 +102,20 @@ def load_master_data():
     except:
         return pd.DataFrame()
 
-def update_database(uploaded_file):
-    """Admin tool to push CSV data to SQL."""
+def update_database(uploaded_file, mode="append"):
+    """
+    mode="replace": Wipes the database and starts over.
+    mode="append": Keeps existing data and adds the new rows.
+    """
     df = pd.read_csv(uploaded_file)
     df.columns = df.columns.str.strip()
-    if df.iloc[0]['Owner Detail'] == 'Grand Total': df = df.drop(df.index[0])
     
-    # Replace table in Supabase
-    df.to_sql("transactions", engine, if_exists="replace", index=False)
+    # Remove the 'Grand Total' row if it exists in the CSV
+    if not df.empty and df.iloc[0]['Owner Detail'] == 'Grand Total':
+        df = df.drop(df.index[0])
+    
+    # Push to SQL
+    df.to_sql("transactions", engine, if_exists=mode, index=False)
     st.cache_data.clear()
 
 # --- 5. LOGIN ---
