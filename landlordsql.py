@@ -9,24 +9,6 @@ from sqlalchemy import create_engine, text
 
 # --- 1. DATABASE CONFIGURATION ---
 # Ensure your Streamlit Secret "DB_URL" uses Port 6543 for the Supabase Pooler
-# --- 1. DATABASE CONFIGURATION & DIAGNOSTIC ---
-try:
-    # 1. Pull the URL from secrets
-    DB_URL = st.secrets["DB_URL"]
-    engine = create_engine(DB_URL)
-    
-    # 2. Immediate Diagnostic Check
-    with st.expander("🚨 DEBUG: Connection Diagnostic", expanded=True):
-        try:
-            with engine.connect() as conn:
-                st.success("✅ App is successfully talking to Supabase!")
-                # Check if tables exist
-                res = conn.execute(text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'users')"))
-                st.write(f"Users table initialized: {res.scalar()}")
-        except Exception as conn_err:
-            st.error("❌ Connection Failed. See real error below:")
-            st.code(str(conn_err))
-            st.stop() # Stop here so we can read the message
 
 except Exception as config_err:
     st.error("🚨 Configuration Error: Is DB_URL set in Streamlit Secrets?")
