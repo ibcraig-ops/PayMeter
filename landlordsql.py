@@ -9,10 +9,20 @@ from sqlalchemy import create_engine, text
 
 # --- 1. DATABASE CONFIGURATION ---
 try:
-    DB_URL = st.secrets["DB_URL"]
-    engine = create_engine(DB_URL)
+    raw_url = st.secrets["DB_URL"]
+    
+    # THE CLEANER: Removes spaces, brackets, or quotes that might be 'stuck' to the URL
+    clean_url = raw_url.strip().strip('"').strip("'").replace(" ", "")
+    
+    # DIAGNOSTIC: This will tell you what the app thinks the host is (safely)
+    if "@" in clean_url:
+        host_part = clean_url.split("@")[-1].split(":")[0]
+        # If this says "a.", there is still a typo in your Secret
+        st.sidebar.caption(f"📡 Connecting to: {host_part}") 
+
+    engine = create_engine(clean_url)
 except Exception as e:
-    st.error("🚨 Database Connection URL not found in Secrets.")
+    st.error("🚨 Secret Configuration Error")
     st.stop()
 
 # --- 2. APP CONFIG & BRANDING ---
