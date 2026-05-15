@@ -37,13 +37,26 @@ if 'logged_in' not in st.session_state:
 # --- 4. DATABASE FUNCTIONS ---
 
 def load_users():
+    """Load users with a diagnostic check to see redacted errors."""
     try:
         return pd.read_sql("SELECT * FROM users", engine)
-    except Exception:
-        admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
-        df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
-        df_init.to_sql("users", engine, if_exists="replace", index=False)
-        return df_init
+    except Exception as e:
+        # If the table just doesn't exist, try to create it
+        if "does not exist" in str(e).lower() or "no such table" in str(e).lower():
+            try:
+                admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
+                df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
+                df_init.to_sql("users", engine, if_exists="replace", index=False)
+                return df_init
+            except Exception as e_sql:
+                # THIS IS THE KEY: This will show us the REAL error message
+                st.error("🚨 DATABASE BOOTSTRAP FAILED")
+                st.code(str(e_sql)) 
+                st.stop()
+        else:
+            st.error("🚨 DATABASE CONNECTION ERROR")
+            st.code(str(e))
+            st.stop()
 
 def save_user(username, password, role, owner_name):
     hashed_pass = hashlib.sha256(password.encode()).hexdigest()
