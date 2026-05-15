@@ -34,15 +34,23 @@ if 'logged_in' not in st.session_state:
 # --- 4. DATABASE FUNCTIONS (SQL) ---
 
 def load_users():
+    """Load users or create the table if Supabase is empty."""
     try:
-        # Check if we can even connect
-        with engine.connect() as conn:
-            return pd.read_sql("SELECT * FROM users", conn)
-    except Exception as e:
-        # This will show you the REAL error message Streamlit is hiding
-        st.error("🚨 Database Connection Diagnostic:")
-        st.code(str(e)) 
-        st.stop()
+        # Try to pull the users
+        return pd.read_sql("SELECT * FROM users", engine)
+    except Exception:
+        # If the table is missing, create it immediately
+        st.info("Initializing system tables for the first time...")
+        admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
+        df_init = pd.DataFrame([{
+            "username": "admin", 
+            "password": admin_pass, 
+            "role": "admin", 
+            "owner_name": "All"
+        }])
+        # This command creates the table in Supabase
+        df_init.to_sql("users", engine, if_exists="replace", index=False)
+        return df_init
 
 def save_user(username, password, role, owner_name):
     """Add a new user to the SQL database."""
