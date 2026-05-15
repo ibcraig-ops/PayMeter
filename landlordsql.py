@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import create_engine, text
 
 # --- 1. DATABASE CONFIGURATION ---
-# Format: postgresql://postgres:G#!8E5@a.?,6qPP@db.[REF].supabase.co:5432/postgres
+# Format: postgresql://postgres:Busydog01!#$@db.[REF].supabase.co:5432/postgres
 try:
     DB_URL = st.secrets["DB_URL"]
     engine = create_engine(DB_URL)
