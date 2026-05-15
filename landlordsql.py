@@ -17,7 +17,7 @@ except Exception as e:
     st.stop()
 
 # --- 2. PAGE CONFIG & PDF ---
-st.set_page_config(page_title="I-Switch Executive Portal", layout="wide")
+st.set_page_config(page_title="Executive Portal", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -34,15 +34,15 @@ if 'logged_in' not in st.session_state:
 # --- 4. DATABASE FUNCTIONS (SQL) ---
 
 def load_users():
-    """Load users from SQL database; create table if missing."""
     try:
-        return pd.read_sql("SELECT * FROM users", engine)
-    except:
-        # Initial setup: Create table and add default admin
-        admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
-        df = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
-        df.to_sql("users", engine, if_exists="replace", index=False)
-        return df
+        # Check if we can even connect
+        with engine.connect() as conn:
+            return pd.read_sql("SELECT * FROM users", conn)
+    except Exception as e:
+        # This will show you the REAL error message Streamlit is hiding
+        st.error("🚨 Database Connection Diagnostic:")
+        st.code(str(e)) 
+        st.stop()
 
 def save_user(username, password, role, owner_name):
     """Add a new user to the SQL database."""
