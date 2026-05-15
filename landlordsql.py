@@ -37,6 +37,7 @@ if 'logged_in' not in st.session_state:
 # --- 4. DATABASE FUNCTIONS ---
 
 def load_users():
+    """Load users from Supabase; auto-creates the table on first run."""
     try:
         return pd.read_sql("SELECT * FROM users", engine)
     except Exception:
@@ -63,7 +64,7 @@ def update_user_password(username, new_password):
         with engine.connect() as conn:
             conn.execute(query, {"p": hashed_pass, "u": username})
             conn.commit()
-        return True, f"Password for {username} updated!"
+        return True, f"Password updated!"
     except Exception as e:
         return False, f"Error: {e}"
 
@@ -76,7 +77,7 @@ def delete_user(username):
             conn.commit()
         return True, f"User {username} deleted."
     except:
-        return False, "Failed to delete user."
+        return False, "Delete failed."
 
 @st.cache_data(ttl=60)
 def load_master_data():
@@ -84,7 +85,7 @@ def load_master_data():
         df = pd.read_sql("SELECT * FROM transactions", engine)
         if df.empty: return df
         
-        # Ensure 'Units' is numeric for math
+        # Numeric cleanup
         df['Units'] = pd.to_numeric(df['Units'], errors='coerce').fillna(0)
         df['Sum Of Total Incl Vat'] = pd.to_numeric(df['Sum Of Total Incl Vat'], errors='coerce').fillna(0)
         df['Total Service Fee Incl Vat'] = pd.to_numeric(df['Total Service Fee Incl Vat'], errors='coerce').fillna(0)
@@ -121,7 +122,7 @@ if not st.session_state['logged_in']:
         if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
         st.title("🔐 Executive Portal Login")
     u_df = load_users()
-    with st.form("login_form"):
+    with st.form("login"):
         u, p = st.text_input("Username"), st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
             hp = hashlib.sha256(p.encode()).hexdigest()
@@ -133,7 +134,7 @@ if not st.session_state['logged_in']:
                     'sel_owner': row.iloc[0]['owner_name'] if row.iloc[0]['role'] == 'landlord' else "All Owners"
                 })
                 st.rerun()
-            else: st.error("Invalid Login")
+            else: st.error("Invalid Username/Password")
     st.stop()
 
 # --- 6. NAVIGATION ---
@@ -150,7 +151,7 @@ with st.sidebar:
             mode_key = "append" if "Add" in up_mode else "replace"
             if up_file and st.button("💾 Sync to Supabase"):
                 update_database(up_file, mode=mode_key)
-                st.success("Database Updated!")
+                st.success("Sync Complete!")
                 st.rerun()
 
     st.divider()
@@ -186,28 +187,43 @@ if st.session_state['current_page'] == "UserAdmin":
     with t2:
         udf = load_users()
         st.dataframe(udf[['username', 'role', 'owner_name']], use_container_width=True)
-        u_del = st.selectbox("Delete Account", udf['username'].tolist())
-        if st.button("🗑️ Confirm Delete"): s, m = delete_user(u_del); st.rerun()
+        u_del = st.selectbox("Select user to delete", udf['username'].tolist())
+        if st.button("🗑️ Delete Account"): s, m = delete_user(u_del); st.rerun()
     with t3:
-        u_reset = st.selectbox("Account to Reset", load_users()['username'].tolist(), key="reset_u")
-        p1, p2 = st.text_input("New Password", type="password"), st.text_input("Confirm Password", type="password")
-        if st.button("🔐 Update"):
+        u_reset = st.selectbox("Select Account", load_users()['username'].tolist(), key="reset_u")
+        p1, p2 = st.text_input("New Password", type="password"), st.text_input("Confirm", type="password")
+        if st.button("🔐 Update Password"):
             if p1 == p2 and p1 != "":
                 s, m = update_user_password(u_reset, p1); st.success(m) if s else st.error(m)
             else: st.error("Mismatch.")
 
 elif st.session_state['current_page'] == "Analytics":
-    st.title("📈 Analytics")
-    if working_df.empty: st.warning("No data.")
+    st.title("📈 Analytics Deep-Dive")
+    if working_df.empty: st.warning("No data found.")
     else:
+        # Robust column checks for charts
+        cols = working_df.columns.tolist()
         c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', hole=0.4, title="Revenue by Resource"), use_container_width=True)
-        with c2: 
-            sun_agg = working_df.groupby(['Meter Type', 'Meter Model'])['Sum Of Total Incl Vat'].sum().reset_index()
-            st.plotly_chart(px.sunburst(sun_agg, path=['Meter Type', 'Meter Model'], values='Sum Of Total Incl Vat', title="Hardware Split"), use_container_width=True)
+        with c1:
+            if 'Service Resource' in cols:
+                st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', hole=0.4, title="Revenue by Resource"), use_container_width=True)
+        with c2:
+            if all(x in cols for x in ['Meter Type', 'Meter Model']):
+                sun_agg = working_df.groupby(['Meter Type', 'Meter Model'])['Sum Of Total Incl Vat'].sum().reset_index()
+                st.plotly_chart(px.sunburst(sun_agg, path=['Meter Type', 'Meter Model'], values='Sum Of Total Incl Vat', title="Hardware Split"), use_container_width=True)
+        
+        st.divider()
+        c3, c4 = st.columns(2)
+        with c3:
+            if 'Client' in cols:
+                st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client"), use_container_width=True)
+        with c4:
+            if 'Customer Surname' in cols:
+                top_cust = working_df.groupby('Customer Surname')['Sum Of Total Incl Vat'].sum().sort_values(ascending=False).head(10).reset_index()
+                st.plotly_chart(px.bar(top_cust, x='Sum Of Total Incl Vat', y='Customer Surname', orientation='h', title="Top 10 Customers"), use_container_width=True)
 
 elif st.session_state['current_page'] == "Dashboard":
-    if working_df.empty: st.warning("No data found.")
+    if working_df.empty: st.warning("Database empty. Upload transactions to begin.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
         with st.sidebar:
@@ -218,29 +234,26 @@ elif st.session_state['current_page'] == "Dashboard":
         fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Month'].isin(sm))]
 
         if not fdf.empty:
+            # TREND GRAPH
+            st.subheader("📈 Revenue Performance Trend")
+            trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
+            st.plotly_chart(px.line(trend_data, x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
+
+            st.divider()
+
+            # SUMMARY TABLE
             st.subheader("📋 Monthly Statement Breakdown")
-            
-            # Aggregate and Rename
             bs = fdf.groupby(['Year', 'Month', 'Year_Month_Key', 'Building Detail']).agg({
-                'Sum Of Total Incl Vat': 'sum', 
-                'Total Service Fee Incl Vat': 'sum', 
-                'Units': 'sum', 
-                'Meter Number': 'nunique'
-            }).rename(columns={
-                'Sum Of Total Incl Vat': 'Sales', 
-                'Total Service Fee Incl Vat': 'Fees',
-                'Units': 'Units',
-                'Meter Number': 'Meters'
-            })
+                'Sum Of Total Incl Vat': 'sum', 'Total Service Fee Incl Vat': 'sum', 
+                'Units': 'sum', 'Meter Number': 'nunique'
+            }).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Total Service Fee Incl Vat': 'Fees', 'Units': 'Units', 'Meter Number': 'Meters'})
 
             pp = fdf.pivot_table(index=['Year', 'Month', 'Year_Month_Key', 'Building Detail'], columns='Paytype', values='Sum Of Total Incl Vat', aggfunc='sum', fill_value=0)
             summary = pd.concat([bs, pp], axis=1).sort_index(level='Year_Month_Key')
-            
             totals = summary.sum().to_frame().T
             totals.index = pd.MultiIndex.from_tuples([('---', 'GRAND TOTAL', '---', '---')], names=['Year', 'Month', 'Year_Month_Key', 'Building Detail'])
             summary.index = summary.index.set_levels([l.astype(str) for l in summary.index.levels])
             
-            # --- ROBUST TABLE DISPLAY ---
             combined_display = pd.concat([summary, totals])
             all_cols = combined_display.columns.tolist()
             currency_cols = [c for c in ['Sales', 'Fees'] + list(pp.columns) if c in all_cols]
@@ -249,46 +262,10 @@ elif st.session_state['current_page'] == "Dashboard":
             if currency_cols: styler = styler.format("R {:,.2f}", subset=currency_cols)
             if 'Units' in all_cols: styler = styler.format("{:,.2f}", subset=['Units'])
             if 'Meters' in all_cols: styler = styler.format("{:,.0f}", subset=['Meters'])
-
             st.dataframe(styler, use_container_width=True)
 
-            st.divider()
+            # EXPORTS
             c1, c2 = st.columns(2)
             with c1:
                 xl_io = io.BytesIO()
-                with pd.ExcelWriter(xl_io, engine='xlsxwriter') as wr: summary.to_excel(wr)
-                st.download_button("📥 Excel Export", xl_io.getvalue(), "Statement.xlsx")
-            with c2:
-                if FPDF:
-                    ex_m = sorted(fdf['Display_Month'].unique(), key=lambda x: datetime.strptime(x, '%B %Y'))
-                    sel_m = st.selectbox("Select Month for PDF", ex_m)
-                    if st.button("📥 Generate PDF"):
-                        m_n, y_v = sel_m.split(); m_data = summary.xs(str(y_v), level='Year').xs(m_n, level='Month')
-                        def gen_p(df, title):
-                            pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
-                            pdf.cell(270, 10, title, ln=True, align='C'); pdf.ln(10); pdf.set_font("Helvetica", size=9)
-                            for h in ["Building"] + list(df.columns): pdf.cell(28, 10, str(h)[:12], 1)
-                            pdf.ln()
-                            for i, r in df.iterrows():
-                                pdf.cell(28, 10, str(i[1])[:12], 1)
-                                for idx, v in enumerate(r): pdf.cell(28, 10, f"{v:,.2f}" if isinstance(v, (float, int)) else str(v), 1)
-                                pdf.ln()
-                            return bytes(pdf.output())
-                        st.download_button("Download PDF", gen_p(m_data, f"Statement: {sel_m}"), f"Statement_{sel_m}.pdf")
-
-elif st.session_state['current_page'] == "Management":
-    st.title("🛠️ Meter Management")
-    if not working_df.empty:
-        # Use 'Unit' (Flat Name) and 'Customer Surname' to make search easier
-        mldf = working_df[['Meter_Search', 'Unit', 'Customer Surname']].drop_duplicates()
-        mldf['Label'] = mldf['Meter_Search'] + " - Flat: " + mldf['Unit'].astype(str) + " (" + mldf['Customer Surname'] + ")"
-        sel = st.selectbox("Search Meter", options=["Select..."] + sorted(mldf['Label'].tolist()))
-        if sel != "Select...":
-            m_no = sel.split(" - ")[0]
-            st.success(f"Selected: {m_no}")
-            ca, cb = st.columns(2)
-            with ca: st.button("🚫 Block Meter", type="primary", use_container_width=True)
-            with cb: st.button("🎫 Generate Free Token", use_container_width=True)
-            st.divider()
-            st.subheader(f"📜 History for {m_no}")
-            st.dataframe(working_df[working_df['Meter_Search'] == m_no].sort_values('Trans_date', ascending=False), use_container_width=True)
+                with pd.ExcelWriter(xl_io, engine='xlsx
