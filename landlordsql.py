@@ -190,13 +190,12 @@ elif st.session_state['current_page'] == "Dashboard":
         with st.sidebar:
             sb = st.multiselect("Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
             sm = st.multiselect("Months", sorted(working_df['Month'].unique()), default=sorted(working_df['Month'].unique()))
+        
         fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Month'].isin(sm))]
+
         if not fdf.empty:
-            st.subheader("📈 Revenue Performance")
-            trend = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
-            st.plotly_chart(px.line(trend, x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
-            st.divider()
-            st.subheader("📋 Monthly Breakdown")
+            # --- SECTION 1: MONTHLY BREAKDOWN ---
+            st.subheader("📋 Monthly Statement Breakdown")
             bs = fdf.groupby(['Year', 'Month', 'Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Total Service Fee Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Total Service Fee Incl Vat': 'Fees', 'Units': 'Units', 'Meter Number': 'Meters'})
             pp = fdf.pivot_table(index=['Year', 'Month', 'Year_Month_Key', 'Building Detail'], columns='Paytype', values='Sum Of Total Incl Vat', aggfunc='sum', fill_value=0)
             summary = pd.concat([bs, pp], axis=1).sort_index(level='Year_Month_Key')
@@ -215,7 +214,7 @@ elif st.session_state['current_page'] == "Dashboard":
             with c1:
                 xl_io = io.BytesIO()
                 with pd.ExcelWriter(xl_io, engine='xlsxwriter') as wr: summary.to_excel(wr)
-                st.download_button("📥 Excel", xl_io.getvalue(), "Statement.xlsx")
+                st.download_button("📥 Excel Export", xl_io.getvalue(), "Statement.xlsx")
             with c2:
                 if FPDF:
                     ex_m = sorted(fdf['Display_Month'].unique())
@@ -233,15 +232,36 @@ elif st.session_state['current_page'] == "Dashboard":
                                 pdf.ln()
                             return bytes(pdf.output())
                         st.download_button("Download PDF", gen_p(m_data, f"Statement: {sel_m}"), f"{sel_m}.pdf")
+
             st.divider()
-            st.subheader("🏆 Top 10 Transactions")
+
+            # --- SECTION 2: TOP 10 ---
+            st.subheader("🏆 Top 10 Highest Single Transactions")
             top10 = fdf.sort_values(by='Sum Of Total Incl Vat', ascending=False).head(10).copy()
             top10['Date'] = top10['Trans_date'].dt.strftime('%Y-%m-%d %H:%M')
             st.dataframe(top10[['Date', 'Client', 'Customer Surname', 'Sum Of Total Incl Vat', 'Payment Mode']].style.format("R {:,.2f}", subset=['Sum Of Total Incl Vat']), use_container_width=True)
+
             st.divider()
-            st.subheader("🔎 Search")
-            q = st.text_input("Search Anything...")
-            if q: st.dataframe(fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)], use_container_width=True)
+
+            # --- SECTION 3: PERFORMANCE TREND GRAPH ---
+            st.subheader("📈 Revenue Performance Trend")
+            trend = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
+            st.plotly_chart(px.line(trend, x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True, title="Revenue Over Time"), use_container_width=True)
+
+            st.divider()
+
+            # --- SECTION 4: FULL TRANSACTION SEARCH ---
+            st.subheader("🔎 Global Transaction Search")
+            q = st.text_input("Filter results (e.g., Meter No, Surname, Amount)...")
+            
+            # Show all by default, filter if 'q' exists
+            if q:
+                search_results = fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
+                st.write(f"Found {len(search_results)} matching transactions:")
+                st.dataframe(search_results, use_container_width=True)
+            else:
+                st.write(f"Showing all {len(fdf)} transactions:")
+                st.dataframe(fdf, use_container_width=True)
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Management")
