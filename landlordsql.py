@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -9,13 +8,18 @@ from datetime import datetime
 from sqlalchemy import create_engine, text
 
 # --- 1. SESSION STATE INITIALIZATION ---
+# This must be at the very top to prevent KeyErrors
 if 'logged_in' not in st.session_state:
     st.session_state.update({
-        'logged_in': False, 'user_role': None, 'assigned_owner': None, 
-        'current_page': "Dashboard", 'user_name': None, 'sel_owner': "All Owners"
+        'logged_in': False, 
+        'user_role': None, 
+        'assigned_owner': None, 
+        'current_page': "Dashboard", 
+        'user_name': None, 
+        'sel_owner': "All Owners"
     })
 
-# --- 2. DATABASE CONFIGURATION (FORCE-FORMAT VERSION) ---
+# --- 2. DATABASE CONFIGURATION ---
 try:
     def scrub(key):
         return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
@@ -26,24 +30,18 @@ try:
     PORT = scrub("DB_PORT")
     DB = scrub("DB_NAME")
     
-    # --- THE FORCE-FORMAT FIX ---
-    # We ignore what's in the secret and FORCE the 'postgres.ID' structure
-    # If the secret already has 'postgres.', we clean it first
+    # THE FORCE-FORMAT FIX: Ensures username is 'postgres.ID'
     clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
     U = f"postgres.{clean_id}"
     
-    # Construct connection string
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
-    
-    # Sidebar Success Message
-    st.sidebar.success(f"✔️ Authenticated as: {U}")
 
 except Exception as e:
-    st.error("🚨 Configuration Error: Check your Streamlit Secrets.")
+    st.error("🚨 Configuration Error: Please check your Streamlit Secrets.")
     st.stop()
 
-# --- 3. APP CONFIG & PDF ---
+# --- 3. APP CONFIG & BRANDING ---
 st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
@@ -54,22 +52,30 @@ except ImportError:
 # --- 4. DATABASE FUNCTIONS ---
 
 def load_users():
+    """Handles the initial handshake and user loading."""
     try:
-        return pd.read_sql("SELECT * FROM users", engine)
+        df = pd.read_sql("SELECT * FROM users", engine)
+        st.sidebar.success(f"✔️ Connected: {U}")
+        return df
     except Exception as e:
-        if "does not exist" in str(e).lower():
+        err_str = str(e).lower()
+        if "does not exist" in err_str:
+            # Table missing? Bootstrap the admin account
             admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
             df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
             try:
                 df_init.to_sql("users", engine, if_exists="replace", index=False)
+                st.sidebar.success(f"✔️ Initialized: {U}")
                 return df_init
             except Exception as sql_e:
-                st.error("🚨 Database Write Error.")
+                st.error("🚨 Database Write Error")
                 st.code(str(sql_e))
                 st.stop()
         else:
+            # Handshake failure (Tenant not found / Bad Password)
+            st.sidebar.error("❌ Connection Failed")
             st.error("🚨 Supabase Connection Rejected")
-            st.info(f"The server rejected username: {U}. Ensure your Project ID in Secrets is correct.")
+            st.info(f"Verify that Project ID '{clean_id}' matches your Supabase Project Settings.")
             st.code(str(e))
             st.stop()
 
@@ -112,30 +118,28 @@ def update_database(f, m):
     st.cache_data.clear()
 
 def gen_p(df, title):
+    """Robust PDF generator compatible with fpdf and fpdf2."""
     pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
     pdf.cell(270, 10, title, ln=True, align='C'); pdf.ln(10); pdf.set_font("Helvetica", size=8)
     pdf_df = df.reset_index()
-    for h in pdf_df.columns: pdf.cell(30, 10, str(h)[:12], 1)
+    for h in pdf_df.columns: pdf.cell(32, 10, str(h)[:14], 1)
     pdf.ln()
     for _, r in pdf_df.iterrows():
         for v in r:
             txt = f"{v:,.2f}" if isinstance(v, (float, int)) else str(v)[:14]
-            pdf.cell(30, 10, txt, 1)
+            pdf.cell(32, 10, txt, 1)
         pdf.ln()
-    try:
-        # Modern fpdf2/fpdf compatibility
-        return pdf.output(dest='S').encode('latin-1')
-    except:
-        return pdf.output()
+    try: return pdf.output(dest='S').encode('latin-1')
+    except: return pdf.output()
 
-# --- 5. LOGIN ---
+# --- 5. LOGIN SCREEN ---
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
         st.title("🔐 Executive Login")
     u_df = load_users()
-    with st.form("login"):
+    with st.form("login_form"):
         un, pw = st.text_input("Username"), st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
             hp = hashlib.sha256(pw.encode()).hexdigest()
@@ -172,17 +176,17 @@ with st.sidebar:
     st.divider()
     if not raw_df.empty and st.session_state['user_role'] == 'admin':
         opts = ["All Owners"] + sorted(raw_df['Owner Detail'].unique().tolist())
-        st.session_state['sel_owner'] = st.selectbox("Portfolio View:", opts)
+        st.session_state['sel_owner'] = st.selectbox("View Portfolio As:", opts)
     if st.button("Logout"): st.session_state['logged_in'] = False; st.rerun()
 
 # --- 7. PAGES ---
 working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
 if st.session_state['current_page'] == "Dashboard":
-    if working_df.empty: st.warning("No data available.")
+    if working_df.empty: st.warning("No data available. Please upload transactions.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
-        sb = st.multiselect("Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
+        sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
         fdf = working_df[working_df['Building Detail'].isin(sb)]
         
         if not fdf.empty:
@@ -217,18 +221,18 @@ if st.session_state['current_page'] == "Dashboard":
             st.divider()
             # 4. SEARCH (LAST - SHOWS ALL)
             st.subheader("🔎 Search & All Transactions")
-            q = st.text_input("Filter through all records...")
+            q = st.text_input("Filter results by any keyword...")
             res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
             st.write(f"Showing {len(res)} matching records:")
             st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
-    st.title("📈 Analytics")
+    st.title("📈 Portfolio Analytics")
     if working_df.empty: st.warning("No data.")
     else:
         c1, c2 = st.columns(2)
         with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Mix"), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client"), use_container_width=True)
+        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client Account"), use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
@@ -246,6 +250,6 @@ elif st.session_state['current_page'] == "UserAdmin":
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Lookup")
-    m_no = st.text_input("Enter Meter Number")
+    m_no = st.text_input("Search Meter Number")
     if m_no:
         st.dataframe(working_df[working_df['Meter_Search'].str.contains(m_no)], use_container_width=True)
