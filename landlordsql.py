@@ -7,8 +7,7 @@ import os
 from datetime import datetime
 from sqlalchemy import create_engine, text
 
-# --- 1. INITIALIZE SESSION STATE ---
-# This must be first to prevent KeyErrors on refresh
+# --- 1. SESSION STATE INITIALIZATION ---
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 
@@ -21,7 +20,6 @@ if 'logged_in' not in st.session_state:
 
 # --- 2. DATABASE CONFIGURATION ---
 try:
-    # Scrubbing helper to remove accidental spaces or brackets from secrets
     def scrub(key):
         return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
 
@@ -31,21 +29,20 @@ try:
     PORT = scrub("DB_PORT")
     DB = scrub("DB_NAME")
     
-    # FORCE-FORMAT: Turns 'dcgowasebcwhnyvnmdcb' into 'postgres.dcgowasebcwhnyvnmdcb'
-    # Even if you put the dot in the secret, this logic cleans it up and makes it perfect.
+    # FORCE-FORMAT FIX: Turns ID into 'postgres.ID'
+    # This handles the Supabase Tenant requirement automatically
     clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
     U = f"postgres.{clean_id}"
     
     # Construct the pooler URL
-    # Using ?sslmode=require is mandatory for Supabase
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
 except Exception as e:
-    st.error("🚨 Configuration Error: Check your Streamlit Secrets.")
+    st.error("🚨 Secret Configuration Error: Check your Streamlit Secrets.")
     st.stop()
 
-# --- 3. APP CONFIG & PDF ---
+# --- 3. APP CONFIG & BRANDING ---
 st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
@@ -59,27 +56,26 @@ def load_users():
     """Validates the connection and loads the user table."""
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
-        st.sidebar.success(f"✔️ Connected to Project: {clean_id}")
+        st.sidebar.success(f"✔️ Connected to: {clean_id}")
         return df
     except Exception as e:
         err_str = str(e).lower()
         if "does not exist" in err_str:
-            # Table missing? Create the admin account automatically
+            # First run: Bootstrap admin account
             admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
             df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
             try:
                 df_init.to_sql("users", engine, if_exists="replace", index=False)
-                st.sidebar.success(f"✔️ Database Initialized: {U}")
+                st.sidebar.success(f"✔️ Database Initialized")
                 return df_init
             except Exception as sql_e:
                 st.error("🚨 Database Write Error")
                 st.code(str(sql_e))
                 st.stop()
         else:
-            # Rejection error (Tenant not found / Wrong Host / Wrong Password)
             st.sidebar.error("❌ Connection Failed")
-            st.error("🚨 Supabase Rejected the Connection")
-            st.info(f"The ID '{clean_id}' was not recognized on the host '{H}'. Please verify your Region and Project ID in Supabase Settings.")
+            st.error("🚨 Supabase Connection Rejected")
+            st.info(f"Verify Project ID '{clean_id}' and Host '{H}' match your Supabase settings.")
             st.code(str(e))
             st.stop()
 
@@ -104,13 +100,13 @@ def load_master_data():
     try:
         df = pd.read_sql("SELECT * FROM transactions", engine)
         if df.empty: return df
-        # Convert types for math
+        # Data Cleaning
         df['Units'] = pd.to_numeric(df['Units'], errors='coerce').fillna(0)
         df['Sum Of Total Incl Vat'] = pd.to_numeric(df['Sum Of Total Incl Vat'], errors='coerce').fillna(0)
         df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
         df = df.dropna(subset=['Trans_date', 'Owner Detail', 'Building Detail'])
         
-        # Build display strings
+        # Display Helpers
         df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m')
         df['Month'] = df['Trans_date'].dt.strftime('%B')
         df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str)
@@ -144,7 +140,7 @@ if not st.session_state['logged_in']:
     with c2:
         if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
         st.title("🔐 Executive Login")
-    u_df = load_users() # This also tests the database connection
+    u_df = load_users()
     with st.form("login_gate"):
         un, pw = st.text_input("Username"), st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
@@ -222,25 +218,25 @@ if st.session_state['current_page'] == "Dashboard":
             st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
 
             st.divider()
-            # 3. TREND (THIRD)
+            # 3. PERFORMANCE TREND (THIRD)
             st.subheader("📈 Performance Trend")
             st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
 
             st.divider()
-            # 4. SEARCH (LAST - SHOWS ALL)
-            st.subheader("🔎 Search Transactions")
+            # 4. SEARCH (LAST)
+            st.subheader("🔎 Search All Transactions")
             q = st.text_input("Filter results by keyword...")
             res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
             st.write(f"Showing {len(res)} results:")
             st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
-    st.title("📈 Analytics")
+    st.title("📈 Portfolio Analytics")
     if working_df.empty: st.warning("No data.")
     else:
         c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Split"), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client"), use_container_width=True)
+        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Distribution"), use_container_width=True)
+        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client Account"), use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
@@ -249,7 +245,7 @@ elif st.session_state['current_page'] == "UserAdmin":
     with t1:
         with st.form("create_landlord"):
             nu, np = st.text_input("New Username"), st.text_input("Password", type="password")
-            no = st.selectbox("Assign Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
+            no = st.selectbox("Assign to Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
             if st.form_submit_button("Create Account"): save_user(nu, np, "landlord", no); st.rerun()
     with t2:
         ur = st.selectbox("Select Account", u_df['username'].tolist())
@@ -258,6 +254,6 @@ elif st.session_state['current_page'] == "UserAdmin":
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Lookup")
-    m_no = st.text_input("Search Meter Number")
+    m_no = st.text_input("Search by Meter Number")
     if m_no:
         st.dataframe(working_df[working_df['Meter_Search'].str.contains(m_no)], use_container_width=True)
