@@ -7,29 +7,24 @@ import os
 from datetime import datetime
 from sqlalchemy import create_engine, text
 
-# --- 1. DATABASE CONFIGURATION (SCRUBBER VERSION) ---
+# --- 1. DATABASE CONFIGURATION (PIECE-BY-PIECE VERSION) ---
 try:
-    # 1. Pull the raw secret
-    raw_url = st.secrets["DB_URL"]
+    # Building the URL from parts to prevent the "a." parsing error
+    U = st.secrets["DB_USER"]
+    P = st.secrets["DB_PASS"]
+    H = st.secrets["DB_HOST"]
+    PORT = st.secrets["DB_PORT"]
+    DB = st.secrets["DB_NAME"]
     
-    # 2. Aggressive Cleaning: Removes ALL spaces, brackets, and quotes
-    # This prevents the "a." error caused by hidden characters
-    clean_url = raw_url.strip().replace(" ", "").replace("[", "").replace("]", "").replace('"', "").replace("'", "")
-    
-    # 3. Validation: Ensure it starts with the correct protocol
-    if not clean_url.startswith("postgresql://"):
-        st.error("🚨 Secret Error: Your DB_URL must start with 'postgresql://'")
-        st.stop()
-
+    # Construct the clean connection string
+    clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url)
     
-    # Sidebar Diagnostic (Only admins see the host part)
-    if "@" in clean_url:
-        host_check = clean_url.split("@")[-1].split(":")[0]
-        st.sidebar.caption(f"🌐 Connected to: {host_check}")
+    # Sidebar Diagnostic
+    st.sidebar.caption(f"🌐 Host: {H}")
 
 except Exception as e:
-    st.error("🚨 Database Configuration Error. Check your Streamlit Secrets.")
+    st.error("🚨 Configuration Error: Please ensure DB_USER, DB_PASS, DB_HOST, DB_PORT, and DB_NAME are all set in Secrets.")
     st.stop()
 
 # --- 2. APP CONFIG & BRANDING ---
@@ -49,14 +44,13 @@ def load_users():
     try:
         return pd.read_sql("SELECT * FROM users", engine)
     except Exception:
-        # Initial Setup
         admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
         df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
         try:
             df_init.to_sql("users", engine, if_exists="replace", index=False)
             return df_init
         except Exception as e:
-            st.error("🚨 Connection Failed: The app cannot reach Supabase.")
+            st.error("🚨 Database Connection Failed.")
             st.code(str(e))
             st.stop()
 
@@ -135,11 +129,11 @@ with st.sidebar:
             md = "replace" if st.radio("Mode", ["Overwrite", "Append"]) == "Overwrite" else "append"
             if up and st.button("Sync Now"): update_database(up, md); st.rerun()
     
-    st.button("📊 Dashboard", on_click=lambda: st.session_state.update({'current_page': 'Dashboard'}), use_container_width=True)
-    st.button("📈 Analytics", on_click=lambda: st.session_state.update({'current_page': 'Analytics'}), use_container_width=True)
-    st.button("🛠️ Meters", on_click=lambda: st.session_state.update({'current_page': 'Management'}), use_container_width=True)
+    if st.button("📊 Dashboard", use_container_width=True): st.session_state['current_page'] = "Dashboard"
+    if st.button("📈 Analytics", use_container_width=True): st.session_state['current_page'] = "Analytics"
+    if st.button("🛠️ Meters", use_container_width=True): st.session_state['current_page'] = "Management"
     if st.session_state['user_role'] == 'admin':
-        st.button("👥 Users", on_click=lambda: st.session_state.update({'current_page': 'UserAdmin'}), use_container_width=True)
+        if st.button("👥 Users", use_container_width=True): st.session_state['current_page'] = "UserAdmin"
     
     st.divider()
     if not raw_df.empty and st.session_state['user_role'] == 'admin':
@@ -158,7 +152,7 @@ if st.session_state['current_page'] == "Dashboard":
         sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
         fdf = working_df[working_df['Building Detail'].isin(sb)]
         
-        # 1. BREAKDOWN (First)
+        # 1. BREAKDOWN
         st.subheader("📋 Monthly Breakdown")
         summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters'})
         st.dataframe(summary.style.format("R {:,.2f}", subset=['Sales']), use_container_width=True)
@@ -176,21 +170,20 @@ if st.session_state['current_page'] == "Dashboard":
                     st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
 
         st.divider()
-        # 2. TOP 10 (Second)
-        st.subheader("🏆 Top 10 Highest Transactions")
+        # 2. TOP 10
+        st.subheader("🏆 Top 10 Transactions")
         st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
 
         st.divider()
-        # 3. TREND (Third)
+        # 3. TREND
         st.subheader("📈 Performance Trend")
         st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
 
         st.divider()
-        # 4. SEARCH (Last - Shows All)
+        # 4. SEARCH
         st.subheader("🔎 Search & All Transactions")
-        q = st.text_input("Type to filter through all transactions...")
+        q = st.text_input("Type to filter...")
         res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
-        st.write(f"Showing {len(res)} results:")
         st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
