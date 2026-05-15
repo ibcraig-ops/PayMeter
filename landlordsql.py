@@ -7,30 +7,33 @@ import os
 from datetime import datetime
 from sqlalchemy import create_engine, text
 
-# --- 1. DATABASE CONFIGURATION ---
+# --- 1. DATABASE CONFIGURATION (SCRUBBER VERSION) ---
 try:
+    # 1. Pull the raw secret
     raw_url = st.secrets["DB_URL"]
     
-    # THE CLEANER: Removes spaces, brackets, or quotes that might be 'stuck' to the URL
-    clean_url = raw_url.strip().strip('"').strip("'").replace(" ", "")
+    # 2. Aggressive Cleaning: Removes ALL spaces, brackets, and quotes
+    # This prevents the "a." error caused by hidden characters
+    clean_url = raw_url.strip().replace(" ", "").replace("[", "").replace("]", "").replace('"', "").replace("'", "")
     
-    # DIAGNOSTIC: This will tell you what the app thinks the host is (safely)
-    if "@" in clean_url:
-        host_part = clean_url.split("@")[-1].split(":")[0]
-        # If this says "a.", there is still a typo in your Secret
-        st.sidebar.caption(f"📡 Connecting to: {host_part}") 
+    # 3. Validation: Ensure it starts with the correct protocol
+    if not clean_url.startswith("postgresql://"):
+        st.error("🚨 Secret Error: Your DB_URL must start with 'postgresql://'")
+        st.stop()
 
     engine = create_engine(clean_url)
+    
+    # Sidebar Diagnostic (Only admins see the host part)
+    if "@" in clean_url:
+        host_check = clean_url.split("@")[-1].split(":")[0]
+        st.sidebar.caption(f"🌐 Connected to: {host_check}")
+
 except Exception as e:
-    st.error("🚨 Secret Configuration Error")
+    st.error("🚨 Database Configuration Error. Check your Streamlit Secrets.")
     st.stop()
 
 # --- 2. APP CONFIG & BRANDING ---
-st.set_page_config(
-    page_title="I-Switch Executive Portal",
-    page_icon="logo.png",
-    layout="wide"
-)
+st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -39,66 +42,37 @@ except ImportError:
 
 # --- 3. SESSION STATE ---
 if 'logged_in' not in st.session_state:
-    st.session_state.update({
-        'logged_in': False, 'user_role': None, 'assigned_owner': None, 
-        'current_page': "Dashboard", 'user_name': None, 'sel_owner': "All Owners"
-    })
+    st.session_state.update({'logged_in': False, 'user_role': None, 'assigned_owner': None, 'current_page': "Dashboard", 'user_name': None, 'sel_owner': "All Owners"})
 
 # --- 4. DATABASE FUNCTIONS ---
-
 def load_users():
-    """Load users with a diagnostic check to see redacted errors."""
     try:
         return pd.read_sql("SELECT * FROM users", engine)
-    except Exception as e:
-        # If the table just doesn't exist, try to create it
-        if "does not exist" in str(e).lower() or "no such table" in str(e).lower():
-            try:
-                admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
-                df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
-                df_init.to_sql("users", engine, if_exists="replace", index=False)
-                return df_init
-            except Exception as e_sql:
-                # THIS IS THE KEY: This will show us the REAL error message
-                st.error("🚨 DATABASE BOOTSTRAP FAILED")
-                st.code(str(e_sql)) 
-                st.stop()
-        else:
-            st.error("🚨 DATABASE CONNECTION ERROR")
+    except Exception:
+        # Initial Setup
+        admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
+        df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
+        try:
+            df_init.to_sql("users", engine, if_exists="replace", index=False)
+            return df_init
+        except Exception as e:
+            st.error("🚨 Connection Failed: The app cannot reach Supabase.")
             st.code(str(e))
             st.stop()
 
-def save_user(username, password, role, owner_name):
-    hashed_pass = hashlib.sha256(password.encode()).hexdigest()
+def save_user(u, p, r, o):
+    hp = hashlib.sha256(p.encode()).hexdigest()
     query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
-    try:
-        with engine.connect() as conn:
-            conn.execute(query, {"u": username, "p": hashed_pass, "r": role, "o": owner_name})
-            conn.commit()
-        return True, "User created successfully!"
-    except Exception as e:
-        return False, f"Error: {e}"
+    with engine.connect() as conn:
+        conn.execute(query, {"u": u, "p": hp, "r": r, "o": o}); conn.commit()
+    return True
 
-def update_user_password(username, new_password):
-    hashed_pass = hashlib.sha256(new_password.encode()).hexdigest()
+def update_user_password(u, p):
+    hp = hashlib.sha256(p.encode()).hexdigest()
     query = text("UPDATE users SET password = :p WHERE username = :u")
-    try:
-        with engine.connect() as conn:
-            conn.execute(query, {"p": hashed_pass, "u": username})
-            conn.commit()
-        return True, "Password updated successfully!"
-    except Exception as e:
-        return False, f"Error: {e}"
-
-def delete_user(username):
-    if username == "admin": return False, "Cannot delete primary admin."
-    query = text("DELETE FROM users WHERE username = :u")
-    try:
-        with engine.connect() as conn:
-            conn.execute(query, {"u": username})
-            conn.commit()
-        return True, f"User {username} deleted."
-    except: return False, "Delete failed."
+    with engine.connect() as conn:
+        conn.execute(query, {"p": hp, "u": u}); conn.commit()
+    return True
 
 @st.cache_data(ttl=60)
 def load_master_data():
@@ -107,214 +81,140 @@ def load_master_data():
         if df.empty: return df
         df['Units'] = pd.to_numeric(df['Units'], errors='coerce').fillna(0)
         df['Sum Of Total Incl Vat'] = pd.to_numeric(df['Sum Of Total Incl Vat'], errors='coerce').fillna(0)
-        df['Total Service Fee Incl Vat'] = pd.to_numeric(df['Total Service Fee Incl Vat'], errors='coerce').fillna(0)
         df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
         df = df.dropna(subset=['Trans_date', 'Owner Detail', 'Building Detail'])
-        df['Year'] = df['Trans_date'].dt.year.astype(str)
-        df['Month'] = df['Trans_date'].dt.strftime('%B')
         df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m')
-        df['Display_Month'] = df['Month'] + " " + df['Year']
-        df['Paytype'] = df['Paytype'].fillna('Other')
-        df['Meter_Search'] = df['Meter Number'].apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x).strip())
+        df['Month'] = df['Trans_date'].dt.strftime('%B')
+        df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str)
+        df['Meter_Search'] = df['Meter Number'].astype(str)
         return df
     except: return pd.DataFrame()
 
-def update_database(uploaded_file, mode="append"):
-    df = pd.read_csv(uploaded_file)
-    df.columns = df.columns.str.strip()
-    if not df.empty and df.iloc[0]['Owner Detail'] == 'Grand Total': df = df.drop(df.index[0])
-    df.to_sql("transactions", engine, if_exists=mode, index=False)
+def update_database(f, m):
+    df = pd.read_csv(f); df.columns = df.columns.str.strip()
+    df.to_sql("transactions", engine, if_exists=m, index=False)
     st.cache_data.clear()
 
 def gen_p(df, title):
-    pdf = FPDF(orientation='L')
-    pdf.add_page()
-    pdf.set_font("Helvetica", 'B', 14)
-    pdf.cell(270, 10, title, ln=True, align='C')
-    pdf.ln(10)
-    pdf.set_font("Helvetica", size=8)
-    
-    # Flatten index for the grid
-    plot_df = df.reset_index()
-    for h in plot_df.columns:
-        pdf.cell(28, 10, str(h)[:12], 1)
+    pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
+    pdf.cell(270, 10, title, ln=True, align='C'); pdf.ln(10); pdf.set_font("Helvetica", size=8)
+    pdf_df = df.reset_index()
+    for h in pdf_df.columns: pdf.cell(30, 10, str(h)[:12], 1)
     pdf.ln()
-    
-    for _, r in plot_df.iterrows():
-        for v in r:
-            txt = f"{v:,.2f}" if isinstance(v, (float, int)) else str(v)
-            pdf.cell(28, 10, txt[:14], 1)
+    for _, r in pdf_df.iterrows():
+        for v in r: pdf.cell(30, 10, f"{v:,.2f}" if isinstance(v, (float, int)) else str(v)[:14], 1)
         pdf.ln()
-    
-    try:
-        return pdf.output(dest='S').encode('latin-1')
-    except (TypeError, AttributeError):
-        return pdf.output()
+    try: return pdf.output(dest='S').encode('latin-1')
+    except: return pdf.output()
 
 # --- 5. LOGIN ---
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
-        st.title("🔐 Executive Portal Login")
+        if os.path.exists("logo.png"): st.image("logo.png")
+        st.title("🔐 Executive Login")
     u_df = load_users()
-    with st.form("login_form"):
-        u, p = st.text_input("Username"), st.text_input("Password", type="password")
+    with st.form("l"):
+        un, pw = st.text_input("Username"), st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
-            hp = hashlib.sha256(p.encode()).hexdigest()
-            row = u_df[(u_df['username'] == u) & (u_df['password'] == hp)]
+            hp = hashlib.sha256(pw.encode()).hexdigest()
+            row = u_df[(u_df['username'] == un) & (u_df['password'] == hp)]
             if not row.empty:
-                st.session_state.update({'logged_in': True, 'user_role': row.iloc[0]['role'], 'assigned_owner': row.iloc[0]['owner_name'], 'user_name': u, 'sel_owner': row.iloc[0]['owner_name'] if row.iloc[0]['role'] == 'landlord' else "All Owners"})
+                st.session_state.update({'logged_in': True, 'user_role': row.iloc[0]['role'], 'assigned_owner': row.iloc[0]['owner_name'], 'user_name': un, 'sel_owner': row.iloc[0]['owner_name'] if row.iloc[0]['role'] == 'landlord' else "All Owners"})
                 st.rerun()
-            else: st.error("Invalid Login Credentials")
+            else: st.error("Access Denied")
     st.stop()
 
 # --- 6. NAVIGATION ---
 raw_df = load_master_data()
 with st.sidebar:
-    if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
-    st.title(f"👤 {st.session_state['user_name']}")
-    
+    if os.path.exists("logo.png"): st.image("logo.png")
     if st.session_state['user_role'] == 'admin':
-        with st.expander("📂 System: Data Upload"):
-            up_file = st.file_uploader("Upload CSV", type="csv")
-            up_mode = st.radio("Method", ["Append", "Overwrite"])
-            mode_key = "append" if up_mode == "Append" else "replace"
-            if up_file and st.button("💾 Sync to Database"):
-                update_database(up_file, mode=mode_key); st.success("Database Updated!"); st.rerun()
+        with st.expander("📂 Data Sync"):
+            up = st.file_uploader("Upload CSV", type="csv")
+            md = "replace" if st.radio("Mode", ["Overwrite", "Append"]) == "Overwrite" else "append"
+            if up and st.button("Sync Now"): update_database(up, md); st.rerun()
+    
+    st.button("📊 Dashboard", on_click=lambda: st.session_state.update({'current_page': 'Dashboard'}), use_container_width=True)
+    st.button("📈 Analytics", on_click=lambda: st.session_state.update({'current_page': 'Analytics'}), use_container_width=True)
+    st.button("🛠️ Meters", on_click=lambda: st.session_state.update({'current_page': 'Management'}), use_container_width=True)
+    if st.session_state['user_role'] == 'admin':
+        st.button("👥 Users", on_click=lambda: st.session_state.update({'current_page': 'UserAdmin'}), use_container_width=True)
     
     st.divider()
-    if st.button("📊 Performance Dashboard", use_container_width=True): st.session_state['current_page'] = "Dashboard"
-    if st.button("📈 Analytics Deep-Dive", use_container_width=True): st.session_state['current_page'] = "Analytics"
-    if st.button("🛠️ Meter Management", use_container_width=True): st.session_state['current_page'] = "Management"
-    if st.session_state['user_role'] == 'admin' and st.button("👥 User Management", use_container_width=True): st.session_state['current_page'] = "UserAdmin"
+    if not raw_df.empty and st.session_state['user_role'] == 'admin':
+        opts = ["All Owners"] + sorted(raw_df['Owner Detail'].unique().tolist())
+        st.session_state['sel_owner'] = st.selectbox("View Portfolio As:", opts)
     
-    st.divider()
-    if not raw_df.empty:
-        if st.session_state['user_role'] == 'admin':
-            opts = ["All Owners"] + sorted(raw_df['Owner Detail'].unique().tolist())
-            st.session_state['sel_owner'] = st.selectbox("View As Owner", opts, index=opts.index(st.session_state['sel_owner']) if st.session_state['sel_owner'] in opts else 0)
-            working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
-        else: working_df = raw_df[raw_df['Owner Detail'] == st.session_state['assigned_owner']]
-    else: working_df = pd.DataFrame()
-    
-    if st.button("🚪 Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+    if st.button("Logout"): st.session_state['logged_in'] = False; st.rerun()
 
 # --- 7. PAGES ---
+working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
-if st.session_state['current_page'] == "UserAdmin":
-    st.title("👥 User Management")
-    t1, t2, t3 = st.tabs(["Create", "Delete", "Reset Password"])
-    with t1:
-        with st.form("create_u"):
-            nu, np = st.text_input("Username"), st.text_input("Password", type="password")
-            nr, no = st.selectbox("Role", ["landlord", "admin"]), st.selectbox("Owner Assignment", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
-            if st.form_submit_button("Save User"): s, m = save_user(nu, np, nr, no); st.success(m) if s else st.error(m)
-    with t2:
-        udf = load_users(); st.dataframe(udf[['username', 'role', 'owner_name']], use_container_width=True)
-        u_del = st.selectbox("Select user to delete", udf['username'].tolist())
-        if st.button("🗑️ Confirm Delete"): delete_user(u_del); st.rerun()
-    with t3:
-        u_reset = st.selectbox("Select Account", load_users()['username'].tolist(), key="reset_u")
-        p1, p2 = st.text_input("New Password", type="password"), st.text_input("Confirm New Password", type="password")
-        if st.button("🔐 Update Password"):
-            if p1 == p2 and p1 != "": s, m = update_user_password(u_reset, p1); st.success(m) if s else st.error(m)
-            else: st.error("Passwords must match and cannot be empty.")
-
-elif st.session_state['current_page'] == "Analytics":
-    st.title("📈 Analytics Deep-Dive")
-    if working_df.empty: st.warning("No data found.")
-    else:
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', hole=0.4, title="Revenue by Resource Type"), use_container_width=True)
-        with c2:
-            sun_agg = working_df.groupby(['Meter Type', 'Meter Model'])['Sum Of Total Incl Vat'].sum().reset_index()
-            st.plotly_chart(px.sunburst(sun_agg, path=['Meter Type', 'Meter Model'], values='Sum Of Total Incl Vat', title="Hardware Composition"), use_container_width=True)
-        st.divider()
-        c3, c4 = st.columns(2)
-        with c3: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client Account"), use_container_width=True)
-        with c4: st.plotly_chart(px.bar(working_df.groupby('Customer Surname')['Sum Of Total Incl Vat'].sum().sort_values(ascending=False).head(10).reset_index(), x='Sum Of Total Incl Vat', y='Customer Surname', orientation='h', title="Top 10 Customers by Revenue"), use_container_width=True)
-
-elif st.session_state['current_page'] == "Dashboard":
-    if working_df.empty: st.warning("Database empty. Please upload transactions.")
+if st.session_state['current_page'] == "Dashboard":
+    if working_df.empty: st.warning("No data available.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
-        with st.sidebar:
-            sb = st.multiselect("Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
-            sm = st.multiselect("Months", sorted(working_df['Month'].unique()), default=sorted(working_df['Month'].unique()))
+        sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
+        fdf = working_df[working_df['Building Detail'].isin(sb)]
         
-        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Month'].isin(sm))]
+        # 1. BREAKDOWN (First)
+        st.subheader("📋 Monthly Breakdown")
+        summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters'})
+        st.dataframe(summary.style.format("R {:,.2f}", subset=['Sales']), use_container_width=True)
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            xl = io.BytesIO()
+            with pd.ExcelWriter(xl) as wr: summary.to_excel(wr)
+            st.download_button("📥 Export Excel", xl.getvalue(), "Statement.xlsx")
+        with c2:
+            if FPDF:
+                sel_m = st.selectbox("Select Month for PDF", sorted(fdf['Display_Month'].unique()))
+                if st.button("📥 Generate PDF"):
+                    m_data = fdf[fdf['Display_Month'] == sel_m].groupby('Building Detail').agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum'})
+                    st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
 
-        if not fdf.empty:
-            # 1. MONTHLY BREAKDOWN
-            st.subheader("📋 Monthly Statement Breakdown")
-            bs = fdf.groupby(['Year', 'Month', 'Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Total Service Fee Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Total Service Fee Incl Vat': 'Fees', 'Units': 'Units', 'Meter Number': 'Meters'})
-            pp = fdf.pivot_table(index=['Year', 'Month', 'Year_Month_Key', 'Building Detail'], columns='Paytype', values='Sum Of Total Incl Vat', aggfunc='sum', fill_value=0)
-            summary = pd.concat([bs, pp], axis=1).sort_index(level='Year_Month_Key')
-            totals = summary.sum().to_frame().T
-            totals.index = pd.MultiIndex.from_tuples([('---', 'GRAND TOTAL', '---', '---')], names=['Year', 'Month', 'Year_Month_Key', 'Building Detail'])
-            summary.index = summary.index.set_levels([l.astype(str) for l in summary.index.levels])
-            
-            combined = pd.concat([summary, totals])
-            currency_cols = [c for c in ['Sales', 'Fees'] + list(pp.columns) if c in combined.columns]
-            styler = combined.style
-            if currency_cols: styler = styler.format("R {:,.2f}", subset=currency_cols)
-            if 'Units' in combined.columns: styler = styler.format("{:,.2f}", subset=['Units'])
-            if 'Meters' in combined.columns: styler = styler.format("{:,.0f}", subset=['Meters'])
-            st.dataframe(styler, use_container_width=True)
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                xl_io = io.BytesIO()
-                with pd.ExcelWriter(xl_io, engine='xlsxwriter') as wr: summary.to_excel(wr)
-                st.download_button("📥 Excel Export", xl_io.getvalue(), "Statement.xlsx")
-            with c2:
-                if FPDF:
-                    ex_m = sorted(fdf['Display_Month'].unique())
-                    sel_m = st.selectbox("Select Month for PDF Export", ex_m)
-                    if st.button("📥 Generate PDF"):
-                        try:
-                            m_n, y_v = sel_m.split(); m_data = summary.xs(str(y_v), level='Year').xs(m_n, level='Month')
-                            pdf_bytes = gen_p(m_data, f"Statement: {sel_m}")
-                            st.download_button("Download PDF Now", pdf_bytes, f"{sel_m.replace(' ','_')}.pdf", "application/pdf")
-                        except Exception as e: st.error(f"PDF Error: {e}")
+        st.divider()
+        # 2. TOP 10 (Second)
+        st.subheader("🏆 Top 10 Highest Transactions")
+        st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
 
-            st.divider()
+        st.divider()
+        # 3. TREND (Third)
+        st.subheader("📈 Performance Trend")
+        st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
 
-            # 2. TOP 10
-            st.subheader("🏆 Top 10 Highest Single Transactions")
-            top10 = fdf.sort_values(by='Sum Of Total Incl Vat', ascending=False).head(10).copy()
-            top10['Date'] = top10['Trans_date'].dt.strftime('%Y-%m-%d %H:%M')
-            st.dataframe(top10[['Date', 'Client', 'Customer Surname', 'Sum Of Total Incl Vat', 'Payment Mode']].style.format("R {:,.2f}", subset=['Sum Of Total Incl Vat']), use_container_width=True)
+        st.divider()
+        # 4. SEARCH (Last - Shows All)
+        st.subheader("🔎 Search & All Transactions")
+        q = st.text_input("Type to filter through all transactions...")
+        res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
+        st.write(f"Showing {len(res)} results:")
+        st.dataframe(res, use_container_width=True)
 
-            st.divider()
+elif st.session_state['current_page'] == "Analytics":
+    st.title("📈 Portfolio Analytics")
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Mix"), use_container_width=True)
+    with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client Account"), use_container_width=True)
 
-            # 3. PERFORMANCE GRAPH
-            st.subheader("📈 Revenue Performance Trend")
-            trend = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
-            st.plotly_chart(px.line(trend, x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True, title="Monthly Revenue Trend"), use_container_width=True)
-
-            st.divider()
-
-            # 4. SEARCH
-            st.subheader("🔎 Search Transactions")
-            q = st.text_input("Filter results by Meter No, Name, Unit or Amount...")
-            display_search = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
-            st.write(f"Showing {len(display_search)} transactions:")
-            st.dataframe(display_search, use_container_width=True)
+elif st.session_state['current_page'] == "UserAdmin":
+    st.title("👥 User Administration")
+    u_df = load_users()
+    t1, t2 = st.tabs(["Add Landlord", "Reset Passwords"])
+    with t1:
+        with st.form("cu"):
+            nu, np = st.text_input("New Username"), st.text_input("Temporary Password", type="password")
+            no = st.selectbox("Assign to Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
+            if st.form_submit_button("Create Account"): save_user(nu, np, "landlord", no); st.rerun()
+    with t2:
+        ur = st.selectbox("Select Account", u_df['username'].tolist())
+        npw = st.text_input("New Password", type="password")
+        if st.button("Update Access"): update_user_password(ur, npw); st.success("Access Updated.")
 
 elif st.session_state['current_page'] == "Management":
-    st.title("🛠️ Meter Management")
-    if not working_df.empty:
-        mldf = working_df[['Meter_Search', 'Unit', 'Customer Surname']].drop_duplicates()
-        mldf['Label'] = mldf['Meter_Search'] + " - Flat: " + mldf['Unit'].astype(str) + " (" + mldf['Customer Surname'] + ")"
-        sel = st.selectbox("Select Meter", options=["Select..."] + sorted(mldf['Label'].tolist()))
-        if sel != "Select...":
-            m_no = sel.split(" - ")[0]
-            st.success(f"Meter: {m_no}")
-            col1, col2 = st.columns(2)
-            with col1: st.button("🚫 Block Meter", type="primary", use_container_width=True)
-            with col2: st.button("🎫 Generate Free Token", use_container_width=True)
-            st.divider()
-            st.subheader(f"Full Transaction History for {m_no}")
-            st.dataframe(working_df[working_df['Meter_Search'] == m_no].sort_values('Trans_date', ascending=False), use_container_width=True)
+    st.title("🛠️ Meter Lookup")
+    m_no = st.text_input("Search by Meter Number")
+    if m_no:
+        st.dataframe(working_df[working_df['Meter_Search'].str.contains(m_no)], use_container_width=True)
