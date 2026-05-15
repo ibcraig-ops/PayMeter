@@ -7,8 +7,8 @@ import os
 from datetime import datetime
 from sqlalchemy import create_engine, text
 
-# --- 1. SESSION STATE INITIALIZATION ---
-# This must be at the very top to prevent KeyErrors
+# --- 1. INITIALIZE SESSION STATE ---
+# This must be first to prevent KeyErrors on refresh
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 
@@ -21,6 +21,7 @@ if 'logged_in' not in st.session_state:
 
 # --- 2. DATABASE CONFIGURATION ---
 try:
+    # Scrubbing helper to remove accidental spaces or brackets from secrets
     def scrub(key):
         return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
 
@@ -30,18 +31,21 @@ try:
     PORT = scrub("DB_PORT")
     DB = scrub("DB_NAME")
     
-    # THE FORCE-FORMAT FIX: Ensures username is 'postgres.ID'
+    # FORCE-FORMAT: Turns 'dcgowasebcwhnyvnmdcb' into 'postgres.dcgowasebcwhnyvnmdcb'
+    # Even if you put the dot in the secret, this logic cleans it up and makes it perfect.
     clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
     U = f"postgres.{clean_id}"
     
+    # Construct the pooler URL
+    # Using ?sslmode=require is mandatory for Supabase
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
 except Exception as e:
-    st.error("🚨 Configuration Error: Please check your Streamlit Secrets.")
+    st.error("🚨 Configuration Error: Check your Streamlit Secrets.")
     st.stop()
 
-# --- 3. APP CONFIG & BRANDING ---
+# --- 3. APP CONFIG & PDF ---
 st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
@@ -52,30 +56,30 @@ except ImportError:
 # --- 4. DATABASE FUNCTIONS ---
 
 def load_users():
-    """Handles the initial handshake and user loading."""
+    """Validates the connection and loads the user table."""
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
-        st.sidebar.success(f"✔️ Connected: {U}")
+        st.sidebar.success(f"✔️ Connected to Project: {clean_id}")
         return df
     except Exception as e:
         err_str = str(e).lower()
         if "does not exist" in err_str:
-            # Table missing? Bootstrap the admin account
+            # Table missing? Create the admin account automatically
             admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
             df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
             try:
                 df_init.to_sql("users", engine, if_exists="replace", index=False)
-                st.sidebar.success(f"✔️ Initialized: {U}")
+                st.sidebar.success(f"✔️ Database Initialized: {U}")
                 return df_init
             except Exception as sql_e:
                 st.error("🚨 Database Write Error")
                 st.code(str(sql_e))
                 st.stop()
         else:
-            # Handshake failure (Tenant not found / Bad Password)
+            # Rejection error (Tenant not found / Wrong Host / Wrong Password)
             st.sidebar.error("❌ Connection Failed")
-            st.error("🚨 Supabase Connection Rejected")
-            st.info(f"Verify that Project ID '{clean_id}' matches your Supabase Project Settings.")
+            st.error("🚨 Supabase Rejected the Connection")
+            st.info(f"The ID '{clean_id}' was not recognized on the host '{H}'. Please verify your Region and Project ID in Supabase Settings.")
             st.code(str(e))
             st.stop()
 
@@ -100,10 +104,13 @@ def load_master_data():
     try:
         df = pd.read_sql("SELECT * FROM transactions", engine)
         if df.empty: return df
+        # Convert types for math
         df['Units'] = pd.to_numeric(df['Units'], errors='coerce').fillna(0)
         df['Sum Of Total Incl Vat'] = pd.to_numeric(df['Sum Of Total Incl Vat'], errors='coerce').fillna(0)
         df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
         df = df.dropna(subset=['Trans_date', 'Owner Detail', 'Building Detail'])
+        
+        # Build display strings
         df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m')
         df['Month'] = df['Trans_date'].dt.strftime('%B')
         df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str)
@@ -118,7 +125,6 @@ def update_database(f, m):
     st.cache_data.clear()
 
 def gen_p(df, title):
-    """Robust PDF generator compatible with fpdf and fpdf2."""
     pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
     pdf.cell(270, 10, title, ln=True, align='C'); pdf.ln(10); pdf.set_font("Helvetica", size=8)
     pdf_df = df.reset_index()
@@ -138,20 +144,22 @@ if not st.session_state['logged_in']:
     with c2:
         if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
         st.title("🔐 Executive Login")
-    u_df = load_users()
-    with st.form("login_form"):
+    u_df = load_users() # This also tests the database connection
+    with st.form("login_gate"):
         un, pw = st.text_input("Username"), st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
             hp = hashlib.sha256(pw.encode()).hexdigest()
             row = u_df[(u_df['username'] == un) & (u_df['password'] == hp)]
             if not row.empty:
                 st.session_state.update({
-                    'logged_in': True, 'user_role': row.iloc[0]['role'], 
-                    'assigned_owner': row.iloc[0]['owner_name'], 'user_name': un,
+                    'logged_in': True, 
+                    'user_role': row.iloc[0]['role'], 
+                    'assigned_owner': row.iloc[0]['owner_name'], 
+                    'user_name': un,
                     'sel_owner': row.iloc[0]['owner_name'] if row.iloc[0]['role'] == 'landlord' else "All Owners"
                 })
                 st.rerun()
-            else: st.error("Access Denied")
+            else: st.error("Access Denied: Invalid Credentials")
     st.stop()
 
 # --- 6. NAVIGATION ---
@@ -170,20 +178,20 @@ with st.sidebar:
     st.button("📊 Dashboard", on_click=lambda: st.session_state.update({'current_page': 'Dashboard'}), use_container_width=True)
     st.button("📈 Analytics", on_click=lambda: st.session_state.update({'current_page': 'Analytics'}), use_container_width=True)
     st.button("🛠️ Meters", on_click=lambda: st.session_state.update({'current_page': 'Management'}), use_container_width=True)
-    if st.session_state['user_role'] == 'admin':
-        st.button("👥 Users", on_click=lambda: st.session_state.update({'current_page': 'UserAdmin'}), use_container_width=True)
+    if st.session_state['user_role'] == 'admin' and st.button("👥 Users", use_container_width=True):
+        st.session_state['current_page'] = "UserAdmin"
     
     st.divider()
     if not raw_df.empty and st.session_state['user_role'] == 'admin':
         opts = ["All Owners"] + sorted(raw_df['Owner Detail'].unique().tolist())
-        st.session_state['sel_owner'] = st.selectbox("View Portfolio As:", opts)
+        st.session_state['sel_owner'] = st.selectbox("View Portfolio:", opts)
     if st.button("Logout"): st.session_state['logged_in'] = False; st.rerun()
 
 # --- 7. PAGES ---
 working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
 if st.session_state['current_page'] == "Dashboard":
-    if working_df.empty: st.warning("No data available. Please upload transactions.")
+    if working_df.empty: st.warning("No data found. Please sync a transactions file.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
         sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
@@ -220,26 +228,26 @@ if st.session_state['current_page'] == "Dashboard":
 
             st.divider()
             # 4. SEARCH (LAST - SHOWS ALL)
-            st.subheader("🔎 Search & All Transactions")
-            q = st.text_input("Filter results by any keyword...")
+            st.subheader("🔎 Search Transactions")
+            q = st.text_input("Filter results by keyword...")
             res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
-            st.write(f"Showing {len(res)} matching records:")
+            st.write(f"Showing {len(res)} results:")
             st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
-    st.title("📈 Portfolio Analytics")
+    st.title("📈 Analytics")
     if working_df.empty: st.warning("No data.")
     else:
         c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Mix"), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client Account"), use_container_width=True)
+        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Split"), use_container_width=True)
+        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client"), use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
-    t1, t2 = st.tabs(["Add Landlord", "Reset Passwords"])
+    t1, t2 = st.tabs(["Add Landlord", "Reset Password"])
     with t1:
-        with st.form("cu"):
+        with st.form("create_landlord"):
             nu, np = st.text_input("New Username"), st.text_input("Password", type="password")
             no = st.selectbox("Assign Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
             if st.form_submit_button("Create Account"): save_user(nu, np, "landlord", no); st.rerun()
