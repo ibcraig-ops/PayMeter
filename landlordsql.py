@@ -12,6 +12,21 @@ from sqlalchemy import create_engine, text
 try:
     DB_URL = st.secrets["DB_URL"]
     engine = create_engine(DB_URL)
+# --- EMERGENCY DIAGNOSTIC ---
+with st.expander("🚨 DEBUG: Database Connection Check", expanded=True):
+    try:
+        with engine.connect() as conn:
+            st.success("Connection to Supabase is ACTIVE.")
+            # Check if users table exists
+            result = conn.execute(text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'users')"))
+            exists = result.scalar()
+            st.write(f"Does 'users' table exist? {'Yes' if exists else 'No'}")
+    except Exception as e:
+        st.error("Connection Failed. Real Error below:")
+        st.code(str(e))
+        st.stop() # Stop the app so we can read the error
+
+
 except Exception as e:
     st.error("🚨 Database Connection URL not found. Please check Streamlit Secrets.")
     st.stop()
