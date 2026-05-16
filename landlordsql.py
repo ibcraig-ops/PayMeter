@@ -42,7 +42,7 @@ except Exception as e:
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
-st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
+st.set_page_config(page_title="Landlord Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
     from fpdf import FPDF
