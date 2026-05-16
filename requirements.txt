@@ -1,7 +1,7 @@
 streamlit
 pandas
 plotly
-fpdf
-xlsxwriter
+fpdf2
+openpyxl
 sqlalchemy
 psycopg2-binary
