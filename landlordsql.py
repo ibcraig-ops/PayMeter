@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -208,9 +207,15 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
         
+        # 1. MONTHLY STATEMENT BREAKDOWN
         st.subheader("📋 Monthly Breakdown")
         summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters'})
-        st.dataframe(summary.style.format("R {:,.2f}", subset=['Sales']), use_container_width=True)
+        
+        # FIXED: Injected standard formatting dictionary to scrub trailing zeros from aggregates
+        st.dataframe(summary.style.format({
+            'Sales': 'R {:,.2f}',
+            'Consumption': '{:,.2f}'
+        }), use_container_width=True)
         
         c1, c2 = st.columns(2)
         with c1:
@@ -226,14 +231,17 @@ if st.session_state['current_page'] == "Dashboard":
                     st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
 
         st.divider()
+        # 2. TOP 10 HIGHEST TRANSACTIONS
         st.subheader("🏆 Top 10 Highest Transactions")
         st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
 
         st.divider()
+        # 3. PERFORMANCE TREND LINE GRAPH
         st.subheader("📈 Performance Trend")
         st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
 
         st.divider()
+        # 4. SEARCH ALL TRANSACTIONS
         st.subheader("🔎 Search All Transactions")
         q = st.text_input("Filter dashboard results by keyword...")
         res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
@@ -279,19 +287,14 @@ elif st.session_state['current_page'] == "Management":
     else:
         st.markdown("### 🔍 Search & Filter Portfolio Meters")
         
-        # Extended 4-Column Search Matrix Layout
         col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            query_meter = st.text_input("Search Meter Number", placeholder="Filter by digits...").strip()
+        with col1: query_meter = st.text_input("Search Meter Number", placeholder="Filter by digits...").strip()
         with col2:
             building_options = ["All Buildings"] + sorted(working_df['Building Detail'].unique().tolist())
             query_building = st.selectbox("Filter by Location", building_options)
-        with col3:
-            query_client = st.text_input("Search Client Name", placeholder="e.g. Ontec...").strip()
-        with col4:
-            query_surname = st.text_input("Search Customer Surname", placeholder="e.g. Smith...").strip()
+        with col3: query_client = st.text_input("Search Client Name", placeholder="e.g. Ontec...").strip()
+        with col4: query_surname = st.text_input("Search Customer Surname", placeholder="e.g. Smith...").strip()
             
-        # Execute Filter Chain
         filtered_meters_df = working_df.copy()
         if query_meter:
             filtered_meters_df = filtered_meters_df[filtered_meters_df['Meter_Search'].str.contains(query_meter, case=False, na=False)]
@@ -305,7 +308,6 @@ elif st.session_state['current_page'] == "Management":
         if filtered_meters_df.empty:
             st.warning("No active meters found matching your filter combinations.")
         else:
-            # Build directory aggregation
             directory_flat = filtered_meters_df.groupby('Meter Number').agg({
                 'Building Detail': 'first',
                 'Client': 'first',
@@ -320,14 +322,11 @@ elif st.session_state['current_page'] == "Management":
             }).reset_index()
             
             st.write(f"### 📋 Meter Directory ({len(directory_flat)} Meters Displayed)")
-            
-            # FIXED: Removed trailing floating point zeros via strict format mapping
             st.dataframe(directory_flat.style.format({
                 'Lifetime Billings': 'R {:,.2f}',
                 'Total Consumption': '{:,.2f}'
             }), use_container_width=True)
             
-            # History Drill-Down & Active Control System
             st.divider()
             st.markdown("### 🔎 Inspect & Control Active Meter Instance")
             available_meters = sorted(directory_flat['Meter Number'].unique().tolist())
@@ -336,7 +335,6 @@ elif st.session_state['current_page'] == "Management":
             if selected_meter:
                 ledger_df = working_df[working_df['Meter Number'] == selected_meter].sort_values('Trans_date', ascending=False)
                 
-                # Render Operational Command center panel
                 st.markdown(f"#### ⚡ Meter Operations Control Panel: `{selected_meter}`")
                 op_col1, op_col2 = st.columns(2)
                 
@@ -360,7 +358,6 @@ elif st.session_state['current_page'] == "Management":
                 
                 st.divider()
                 
-                # Performance Cards
                 kpi1, kpi2, kpi3 = st.columns(3)
                 with kpi1: st.metric("Aggregate Revenue Billings", f"R {ledger_df['Sum Of Total Incl Vat'].sum():,.2f}")
                 with kpi2: st.metric("Cumulative Load", f"{ledger_df['Units'].sum():,.2f} Units")
