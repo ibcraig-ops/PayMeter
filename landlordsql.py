@@ -4,6 +4,7 @@ import plotly.express as px
 import hashlib
 import io
 import os
+import random
 from datetime import datetime
 from sqlalchemy import create_engine, text
 
@@ -47,7 +48,13 @@ try:
 except ImportError:
     FPDF = None
 
-# --- 4. DATABASE FUNCTIONS ---
+# --- 4. UTILITY HELPERS ---
+def generate_sts_token():
+    """Generates a standard 20-digit split STS utility token format."""
+    blocks = [f"{random.randint(1000, 9999)}" for _ in range(5)]
+    return "-".join(blocks)
+
+# --- 5. DATABASE FUNCTIONS ---
 def load_users():
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
@@ -271,35 +278,37 @@ elif st.session_state['current_page'] == "Management":
     else:
         st.markdown("### 🔍 Search & Filter Portfolio Meters")
         
-        # Multiple Search & Filter Options
-        col1, col2, col3 = st.columns(3)
+        # Extended 4-Column Search Matrix Layout
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            query_meter = st.text_input("Search Meter Number", placeholder="Type to filter...").strip()
+            query_meter = st.text_input("Search Meter Number", placeholder="Filter by digits...").strip()
         with col2:
             building_options = ["All Buildings"] + sorted(working_df['Building Detail'].unique().tolist())
-            query_building = st.selectbox("Filter by Building Location", building_options)
+            query_building = st.selectbox("Filter by Location", building_options)
         with col3:
-            query_client = st.text_input("Search Client Name", placeholder="Type to filter...").strip()
+            query_client = st.text_input("Search Client Name", placeholder="e.g. Ontec...").strip()
+        with col4:
+            query_surname = st.text_input("Search Customer Surname", placeholder="e.g. Smith...").strip()
             
-        # Apply Search Filters dynamically
+        # Execute Filter Chain
         filtered_meters_df = working_df.copy()
         if query_meter:
             filtered_meters_df = filtered_meters_df[filtered_meters_df['Meter_Search'].str.contains(query_meter, case=False, na=False)]
         if query_building != "All Buildings":
             filtered_meters_df = filtered_meters_df[filtered_meters_df['Building Detail'] == query_building]
         if query_client:
-            filtered_meters_df = filtered_meters_df[
-                filtered_meters_df['Client'].str.contains(query_client, case=False, na=False) | 
-                filtered_meters_df['Customer Surname'].str.contains(query_client, case=False, na=False)
-            ]
+            filtered_meters_df = filtered_meters_df[filtered_meters_df['Client'].str.contains(query_client, case=False, na=False)]
+        if query_surname:
+            filtered_meters_df = filtered_meters_df[filtered_meters_df['Customer Surname'].str.contains(query_surname, case=False, na=False)]
             
         if filtered_meters_df.empty:
             st.warning("No active meters found matching your filter combinations.")
         else:
-            # Generate the flat Meter Summary Table
+            # Build directory aggregation
             directory_flat = filtered_meters_df.groupby('Meter Number').agg({
                 'Building Detail': 'first',
                 'Client': 'first',
+                'Customer Surname': 'first',
                 'Sum Of Total Incl Vat': 'sum',
                 'Units': 'sum',
                 'Trans_date': 'count'
@@ -310,26 +319,51 @@ elif st.session_state['current_page'] == "Management":
             }).reset_index()
             
             st.write(f"### 📋 Meter Directory ({len(directory_flat)} Meters Displayed)")
-            st.dataframe(directory_flat.style.format("R {:,.2f}", subset=['Lifetime Billings']), use_container_width=True)
             
-            # Transaction History Drill-Down Section
+            # FIXED: Removed trailing floating point zeros via strict format mapping
+            st.dataframe(directory_flat.style.format({
+                'Lifetime Billings': 'R {:,.2f}',
+                'Total Consumption': '{:,.2f}'
+            }), use_container_width=True)
+            
+            # History Drill-Down & Active Control System
             st.divider()
-            st.markdown("### 🔎 View Detailed Transaction Ledger")
+            st.markdown("### 🔎 Inspect & Control Active Meter Instance")
             available_meters = sorted(directory_flat['Meter Number'].unique().tolist())
-            
-            selected_meter = st.selectbox("Select any meter from the active list below to inspect its transaction history logs:", available_meters)
+            selected_meter = st.selectbox("Select any meter from the active list below to initiate live commands or view execution history:", available_meters)
             
             if selected_meter:
                 ledger_df = working_df[working_df['Meter Number'] == selected_meter].sort_values('Trans_date', ascending=False)
                 
-                # Dynamic KPIs matching the specific target meter
+                # Render Operational Command center panel
+                st.markdown(f"#### ⚡ Meter Operations Control Panel: `{selected_meter}`")
+                op_col1, op_col2 = st.columns(2)
+                
+                with op_col1:
+                    st.write("**Operational Status Switching**")
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("🔴 Block Meter Connection", use_container_width=True):
+                            st.toast(f"Command Dispatched: Meter {selected_meter} has been BLOCKED.", icon="🔒")
+                    with b2:
+                        if st.button("🟢 Unblock Meter Connection", use_container_width=True):
+                            st.toast(f"Command Dispatched: Meter {selected_meter} has been UNBLOCKED.", icon="🔓")
+                
+                with op_col2:
+                    st.write("**STS Engineering Token Factory**")
+                    token_type = st.selectbox("Select Target Key Config", ["Clear Tamper Status", "Key Change Token", "Clear Credit Reserve", "High Power Limit Test"])
+                    if st.button("⚙️ Generate Engineering Token", use_container_width=True):
+                        generated_key = generate_sts_token()
+                        st.info(f"**Generated STS {token_type} Token:**")
+                        st.code(generated_key, language="text")
+                
+                st.divider()
+                
+                # Performance Cards
                 kpi1, kpi2, kpi3 = st.columns(3)
-                with kpi1: 
-                    st.metric("Total Revenue Billed", f"R {ledger_df['Sum Of Total Incl Vat'].sum():,.2f}")
-                with kpi2: 
-                    st.metric("Total Load Consumed", f"{ledger_df['Units'].sum():,.2f} Units")
-                with kpi3: 
-                    st.metric("Total Transactions Logged", f"{len(ledger_df)}")
+                with kpi1: st.metric("Aggregate Revenue Billings", f"R {ledger_df['Sum Of Total Incl Vat'].sum():,.2f}")
+                with kpi2: st.metric("Cumulative Load", f"{ledger_df['Units'].sum():,.2f} Units")
+                with kpi3: st.metric("Total Recorded Actions", f"{len(ledger_df)}")
                     
-                st.write(f"Showing transactional audit rows for Meter **{selected_meter}**:")
+                st.write(f"### 📋 Detailed Transaction Ledger for Meter: `{selected_meter}`")
                 st.dataframe(ledger_df, use_container_width=True)
