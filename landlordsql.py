@@ -19,7 +19,7 @@ if 'logged_in' not in st.session_state:
         'sel_owner': "All Owners"
     })
 
-# --- 2. DATABASE CONFIGURATION ---
+# --- 2. DATABASE CONFIGURATION (UNLOCKED DIAGNOSTICS) ---
 try:
     def scrub(key):
         return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
@@ -36,12 +36,15 @@ try:
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
+# MODIFICATION: Unlocking traceback errors to find the real culprit
 except Exception as e:
-    st.error("🚨 Secret Configuration Error: Check your Streamlit Secrets.")
+    st.error("🚨 System Initialization Interrupted")
+    st.warning("The database connection sequence failed. Review the raw system traceback below to identify the missing parameter or rejection code:")
+    st.exception(e)
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
-st.set_page_config(page_title="Landlord Executive Portal", page_icon="logo.png", layout="wide")
+st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -56,7 +59,6 @@ def generate_sts_token():
 
 # --- 5. EXECUTIVE EXECUTIVE PDF REPORT TEMPLATE ---
 def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
-    """Generates an executive-grade landscape PDF report matching corporate visual standards."""
     if not FPDF:
         return None
         
@@ -322,7 +324,6 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
-        # 1. PERFORMANCE TREND BAR GRAPH (TOP OF THE PAGE)
         st.subheader("📈 Performance Trend")
         trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
         st.plotly_chart(px.bar(
@@ -336,7 +337,6 @@ if st.session_state['current_page'] == "Dashboard":
         
         st.divider()
         
-        # 2. MONTHLY BREAKDOWN WITH DYNAMIC GROUPING BY OWNERSHIP FILTER
         st.subheader("📋 Monthly Breakdown")
         
         if st.session_state['sel_owner'] == "All Owners":
@@ -385,8 +385,6 @@ if st.session_state['current_page'] == "Dashboard":
         
         summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
         
-        # --- HARDENED TYPE ENFORCEMENT LAYER ---
-        # Ensures pandas forces underlying structural column formats back into numeric dtypes
         summary_with_total['Sales'] = pd.to_numeric(summary_with_total['Sales'], errors='coerce').fillna(0)
         summary_with_total['Consumption'] = pd.to_numeric(summary_with_total['Consumption'], errors='coerce').fillna(0)
         summary_with_total['Meters'] = pd.to_numeric(summary_with_total['Meters'], errors='coerce').fillna(0).astype(int)
@@ -417,7 +415,7 @@ if st.session_state['current_page'] == "Dashboard":
         st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
         st.divider()
         st.subheader("🔎 Fast Ledger Text Search")
-        q = st.text_input("Filter dashboard tables instantly...")
+        q = st.text_input("Filter dashboard results by keyword...")
         res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
         st.dataframe(res, use_container_width=True)
 
