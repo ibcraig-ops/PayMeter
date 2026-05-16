@@ -42,7 +42,7 @@ except Exception as e:
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
-st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
+st.set_page_config(page_title="Landlord Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -54,6 +54,10 @@ def generate_sts_token():
     """Generates a standard 20-digit split STS utility token format."""
     blocks = [f"{random.randint(1000, 9999)}" for _ in range(5)]
     return "-".join(blocks)
+
+def clean_txt(val):
+    """Safeguards FPDF canvas by scrubbing unencodable unicode special characters."""
+    return str(val).encode('latin-1', 'replace').decode('latin-1')
 
 # --- 5. EXECUTIVE EXECUTIVE PDF REPORT TEMPLATE ---
 def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
@@ -74,17 +78,17 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", 'B', 18)
     pdf.set_xy(80, 8)
-    pdf.cell(205, 8, "EXECUTIVE SALES & UTILITY REVENUE REPORT", ln=True, align='R')
+    pdf.cell(205, 8, "EXECUTIVE SALES & UTILITY REVENUE REPORT", ln=0, align='R')
     pdf.set_font("Helvetica", 'I', 10)
-    pdf.set_x(80)
-    pdf.cell(205, 5, f"Portfolio Scope: {portfolio_label}   |   Reporting Window: {period_label}", ln=True, align='R')
+    pdf.set_xy(80, 18)
+    pdf.cell(205, 5, clean_txt(f"Portfolio Scope: {portfolio_label}   |   Reporting Window: {period_label}"), ln=0, align='R')
     
     pdf.set_text_color(51, 65, 85) 
     pdf.set_font("Helvetica", size=9)
     pdf.set_xy(12, 38)
-    pdf.cell(100, 5, f"Document ID: ISR-{random.randint(100000, 999999)}", ln=True)
+    pdf.cell(100, 5, f"Document ID: ISR-{random.randint(100000, 999999)}", ln=1)
     pdf.set_x(12)
-    pdf.cell(100, 5, f"Generated On: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
+    pdf.cell(100, 5, f"Generated On: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=1)
     pdf.ln(4)
     
     pdf.set_fill_color(241, 245, 249) 
@@ -93,43 +97,43 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.rect(12, 50, 62, 18, 'DF')
     pdf.set_xy(14, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(58, 4, "TOTAL GROSS SALES", ln=True)
+    pdf.cell(58, 4, "TOTAL GROSS SALES", ln=1)
     pdf.set_xy(14, 57)
     pdf.set_font("Helvetica", 'B', 12)
     pdf.set_text_color(13, 148, 136) 
-    pdf.cell(58, 8, f"R {total_metrics['gross']:,.2f}", ln=True)
+    pdf.cell(58, 8, f"R {total_metrics['gross']:,.2f}", ln=1)
     
     pdf.set_text_color(51, 65, 85)
     pdf.rect(80, 50, 62, 18, 'DF')
     pdf.set_xy(82, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(58, 4, "PRINCIPLE REVENUE SHARE", ln=True)
+    pdf.cell(58, 4, "PRINCIPLE REVENUE SHARE", ln=1)
     pdf.set_xy(82, 57)
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(58, 8, f"R {total_metrics['net']:,.2f}", ln=True)
+    pdf.cell(58, 8, f"R {total_metrics['net']:,.2f}", ln=1)
     
     pdf.rect(148, 50, 62, 18, 'DF')
     pdf.set_xy(150, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(58, 4, "TOTAL SERVICE FEES", ln=True)
+    pdf.cell(58, 4, "TOTAL SERVICE FEES", ln=1)
     pdf.set_xy(150, 57)
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(58, 8, f"R {total_metrics['fees']:,.2f}", ln=True)
+    pdf.cell(58, 8, f"R {total_metrics['fees']:,.2f}", ln=1)
     
     pdf.rect(216, 50, 69, 18, 'DF')
     pdf.set_xy(218, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(65, 4, "CUMULATIVE UNITS CONSUMED", ln=True)
+    pdf.cell(65, 4, "CUMULATIVE UNITS CONSUMED", ln=1)
     pdf.set_xy(218, 57)
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(65, 8, f"{total_metrics['units']:,.2f} Units", ln=True)
+    pdf.cell(65, 8, f"{total_metrics['units']:,.2f} Units", ln=1)
     
     pdf.ln(12)
     
     pdf.set_font("Helvetica", 'B', 10)
     pdf.set_text_color(30, 58, 138)
     pdf.set_x(12)
-    pdf.cell(200, 6, "DETAILED REVENUE BREAKDOWN BY ASSET LOCATION", ln=True)
+    pdf.cell(200, 6, "DETAILED REVENUE BREAKDOWN BY ASSET LOCATION", ln=1)
     pdf.ln(2)
     
     pdf.set_fill_color(30, 58, 138)
@@ -154,9 +158,9 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
         if toggle_fill: pdf.set_fill_color(248, 250, 252)
         else: pdf.set_fill_color(255, 255, 255)
             
-        pdf.cell(col_w[0], 7, str(r['Period']), 1, 0, 'C', True)
-        pdf.cell(col_w[1], 7, str(r['Building Location'])[:34], 1, 0, 'L', True)
-        pdf.cell(col_w[2], 7, str(r['Utility Type']), 1, 0, 'C', True)
+        pdf.cell(col_w[0], 7, clean_txt(r['Period']), 1, 0, 'C', True)
+        pdf.cell(col_w[1], 7, clean_txt(r['Building Location'])[:34], 1, 0, 'L', True)
+        pdf.cell(col_w[2], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True)
         pdf.cell(col_w[3], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True)
         pdf.cell(col_w[4], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True)
         pdf.cell(col_w[5], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True)
@@ -446,14 +450,12 @@ elif st.session_state['current_page'] == "Reporting":
         m3.metric("Service Fees Retained", f"R {totals['fees']:,.2f}")
         m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
         
-        # FIXED: Added errors='ignore' protective handler to drop instructions
         st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
         
         exp_col1, exp_col2 = st.columns(2)
         window_label = f"Selected Range ({len(selected_months)} Months)" if len(selected_months) < len(chron_timeline) else "Full Historical Portfolio Range"
         with exp_col1:
             xl_buffer = io.BytesIO()
-            # FIXED: Added errors='ignore' protective handler to drop instructions
             with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
             st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
         with exp_col2:
