@@ -59,6 +59,21 @@ def clean_txt(val):
     """Safeguards FPDF canvas by scrubbing unencodable unicode special characters."""
     return str(val).encode('latin-1', 'replace').decode('latin-1')
 
+def gen_p(df, title):
+    """Generates standard byte outputs for dashboard pdf fragments."""
+    pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
+    pdf.cell(270, 10, clean_txt(title), align='C'); pdf.ln(10); pdf.set_font("Helvetica", size=8)
+    pdf_df = df.reset_index()
+    for h in pdf_df.columns: pdf.cell(32, 10, clean_txt(str(h)[:14]), 1)
+    pdf.ln()
+    for _, r in pdf_df.iterrows():
+        for v in r:
+            txt = f"{v:,.2f}" if isinstance(v, (float, int)) else str(v)[:14]
+            pdf.cell(32, 10, clean_txt(txt), 1)
+        pdf.ln()
+    # FIXED: Hardened to return strict binary streams for stream handlers
+    return bytes(pdf.output())
+
 # --- 5. EXECUTIVE EXECUTIVE PDF REPORT TEMPLATE ---
 def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
     if not FPDF:
@@ -184,8 +199,8 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.cell(col_w[7], 8, f"{total_metrics['units']:,.2f}", 1, 0, 'R', True)
     pdf.cell(col_w[8], 8, f"{int(total_metrics['tx_count'])}", 1, 0, 'C', True)
     
-    try: return pdf.output(dest='S').encode('latin-1')
-    except: return pdf.output()
+    # FIXED: Hardened to return strict binary streams for stream handlers
+    return bytes(pdf.output())
 
 # --- 6. DATABASE FUNCTIONS ---
 def load_users():
