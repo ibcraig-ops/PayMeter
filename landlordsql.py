@@ -101,7 +101,7 @@ def load_master_data():
         df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m')
         df['Month'] = df['Trans_date'].dt.strftime('%B')
         df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str)
-        df['Meter_Search'] = df['Meter Number'].astype(str)
+        df['Meter_Search'] = df['Meter Number'].astype(str).str.strip()
         return df
     except: return pd.DataFrame()
 
@@ -176,7 +176,7 @@ with st.sidebar:
 # --- 7. GLOBAL PORTFOLIO FILTERING ---
 working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
-# Inject shared filter on viewable data pages
+# Inject chronological date filters and building filters into sidebar
 if st.session_state['current_page'] in ["Dashboard", "Analytics"]:
     if working_df.empty:
         st.sidebar.warning("No data found.")
@@ -185,9 +185,15 @@ if st.session_state['current_page'] in ["Dashboard", "Analytics"]:
         with st.sidebar:
             st.markdown("### 🔍 Filter Portfolio")
             sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
+            
+            # Extract chronological timeline list using month key mapping
+            chron_timeline = working_df.sort_values('Year_Month_Key')['Display_Month'].unique().tolist()
+            selected_months = st.multiselect("Filter Months/Years", chron_timeline, default=chron_timeline)
+            
             st.divider()
             if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
-        fdf = working_df[working_df['Building Detail'].isin(sb)]
+            
+        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
 else:
     with st.sidebar:
         if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
@@ -195,7 +201,7 @@ else:
 # --- 8. PAGES ---
 
 if st.session_state['current_page'] == "Dashboard":
-    if fdf.empty: st.warning("No data matches selected filters.")
+    if fdf.empty: st.warning("No data matches selected timeline or building parameters.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
         
@@ -217,39 +223,37 @@ if st.session_state['current_page'] == "Dashboard":
                     m_data = fdf[fdf['Display_Month'] == sel_m].groupby('Building Detail').agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum'})
                     st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
 
-        st.divider()
-        # 2. TOP 10 HIGHEST TRANSACTIONS
-        st.subheader("🏆 Top 10 Highest Transactions")
-        st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
+            st.divider()
+            # 2. TOP 10 HIGHEST TRANSACTIONS
+            st.subheader("🏆 Top 10 Highest Transactions")
+            st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
 
-        st.divider()
-        # 3. PERFORMANCE TREND LINE GRAPH
-        st.subheader("📈 Performance Trend")
-        st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
+            st.divider()
+            # 3. PERFORMANCE TREND LINE GRAPH
+            st.subheader("📈 Performance Trend")
+            st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
 
-        st.divider()
-        # 4. SEARCH ALL TRANSACTIONS
-        st.subheader("🔎 Search All Transactions")
-        q = st.text_input("Filter transactions by keyword...")
-        res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
-        st.write(f"Showing {len(res)} results:")
-        st.dataframe(res, use_container_width=True)
+            st.divider()
+            # 4. SEARCH ALL TRANSACTIONS
+            st.subheader("🔎 Search All Transactions")
+            q = st.text_input("Filter dashboard results by keyword...")
+            res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
+            st.write(f"Showing {len(res)} results:")
+            st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
     st.title("📈 Portfolio Analytics")
-    if fdf.empty: st.warning("Select buildings from the sidebar filter to populate analytics dashboards.")
+    if fdf.empty: st.warning("Select items from the sidebar filter options to populate data panels.")
     else:
-        # Row 1: Resource Distributions
         c1, c2 = st.columns(2)
         with c1: 
             st.plotly_chart(px.pie(fdf, values='Sum Of Total Incl Vat', names='Service Resource', title="Revenue Mix by Service Type (Electricity, Water, Gas)"), use_container_width=True)
         with c2: 
             client_revenue = fdf.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index()
-            st.plotly_chart(px.bar(client_revenue, x='Client', y='Sum Of Total Incl Vat', title="Revenue contribution per Client Account", labels={'Sum Of Total Incl Vat':'Total Revenue (R)'}), use_container_width=True)
+            st.plotly_chart(px.bar(client_revenue, x='Client', y='Sum Of Total Incl Vat', title="Revenue Contribution per Client Account", labels={'Sum Of Total Incl Vat':'Total Revenue (R)'}), use_container_width=True)
         
         st.divider()
         
-        # Row 2: Trends and Comparisons
         c3, c4 = st.columns(2)
         with c3:
             consumption_trend = fdf.groupby('Year_Month_Key')['Units'].sum().reset_index()
@@ -273,7 +277,37 @@ elif st.session_state['current_page'] == "UserAdmin":
         if st.button("Update Access"): update_user_password(ur, npw); st.success("Access Updated.")
 
 elif st.session_state['current_page'] == "Management":
-    st.title("🛠️ Meter Lookup")
-    m_no = st.text_input("Search by Meter Number")
-    if m_no:
-        st.dataframe(working_df[working_df['Meter_Search'].str.contains(m_no)], use_container_width=True)
+    st.title("🛠️ Meter Reference & Transaction History")
+    if working_df.empty: 
+        st.warning("No historical transactional data available.")
+    else:
+        st.markdown("### 🔎 Run Meter History Lookup")
+        m_no = st.text_input("Type partial or complete Meter Number to query...", placeholder="e.g. 10204...").strip()
+        
+        if m_no:
+            # Match query string against cleaned text values inside structural search index
+            meter_df = working_df[working_df['Meter_Search'].str.contains(m_no, case=False, na=False)]
+            
+            if meter_df.empty:
+                st.error(f"Zero transactional logs located mapping back to meter string: '{m_no}'")
+            else:
+                st.success(f"Located {len(meter_df)} associated transactional entries.")
+                
+                # Highlight if partial query returned multiple sub-meters
+                distinct_meters = meter_df['Meter Number'].unique()
+                if len(distinct_meters) > 1:
+                    st.info(f"💡 Query matches {len(distinct_meters)} distinct meter nodes. Combined data totals presented below:")
+                
+                # Exec KPI Metric Panels
+                kpi1, kpi2, kpi3 = st.columns(3)
+                with kpi1:
+                    st.metric("Aggregate Revenue Billings", f"R {meter_df['Sum Of Total Incl Vat'].sum():,.2f}")
+                with kpi2:
+                    st.metric("Cumulative Energy/Water Load", f"{meter_df['Units'].sum():,.2f} Units")
+                with kpi3:
+                    st.metric("Total Recorded Actions", f"{len(meter_df)}")
+                
+                st.subheader("📋 Historical Transaction Ledger")
+                st.dataframe(meter_df.sort_values('Trans_date', ascending=False), use_container_width=True)
+        else:
+            st.info("💡 Provide a valid tracking meter number above to access real-time parameter aggregation and full statement audits.")
