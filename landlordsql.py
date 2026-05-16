@@ -298,7 +298,6 @@ with st.sidebar:
 # --- 9. SIDEBAR CONTROL CONTROLLERS ---
 working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
-# FIXED: Standardize variable scope parameters by initializing safe empty list defaults
 chron_timeline = []
 selected_months = []
 
@@ -447,13 +446,15 @@ elif st.session_state['current_page'] == "Reporting":
         m3.metric("Service Fees Retained", f"R {totals['fees']:,.2f}")
         m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
         
-        st.dataframe(rpt_display.drop(columns=['Year_Month_Key']).style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
+        # FIXED: Added errors='ignore' protective handler to drop instructions
+        st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
         
         exp_col1, exp_col2 = st.columns(2)
         window_label = f"Selected Range ({len(selected_months)} Months)" if len(selected_months) < len(chron_timeline) else "Full Historical Portfolio Range"
         with exp_col1:
             xl_buffer = io.BytesIO()
-            with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: rpt_display.drop(columns=['Year_Month_Key']).to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
+            # FIXED: Added errors='ignore' protective handler to drop instructions
+            with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
             st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
         with exp_col2:
             if FPDF:
