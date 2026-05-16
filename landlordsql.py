@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy import create_engine, text
 
 # --- 1. SESSION STATE INITIALIZATION ---
+# Must run first to ensure no KeyErrors occur on page reloads
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 
@@ -29,17 +30,15 @@ try:
     PORT = scrub("DB_PORT")
     DB = scrub("DB_NAME")
     
-    # FORCE-FORMAT FIX: Turns ID into 'postgres.ID'
-    # This handles the Supabase Tenant requirement automatically
+    # Cleans up and forces the mandatory 'postgres.project-id' pattern
     clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
     U = f"postgres.{clean_id}"
     
-    # Construct the pooler URL
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
 except Exception as e:
-    st.error("🚨 Secret Configuration Error: Check your Streamlit Secrets.")
+    st.error("🚨 Configuration Error: Please check your Streamlit Secrets layout.")
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
@@ -53,29 +52,27 @@ except ImportError:
 # --- 4. DATABASE FUNCTIONS ---
 
 def load_users():
-    """Validates the connection and loads the user table."""
+    """Queries user database or builds default admin if empty."""
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
-        st.sidebar.success(f"✔️ Connected to: {clean_id}")
+        st.sidebar.success(f"✔️ Connected to Database")
         return df
     except Exception as e:
         err_str = str(e).lower()
         if "does not exist" in err_str:
-            # First run: Bootstrap admin account
             admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
             df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
             try:
                 df_init.to_sql("users", engine, if_exists="replace", index=False)
-                st.sidebar.success(f"✔️ Database Initialized")
+                st.sidebar.success(f"✔️ System Tables Initialized")
                 return df_init
             except Exception as sql_e:
-                st.error("🚨 Database Write Error")
+                st.error("🚨 System Table Initialization Failed")
                 st.code(str(sql_e))
                 st.stop()
         else:
-            st.sidebar.error("❌ Connection Failed")
-            st.error("🚨 Supabase Connection Rejected")
-            st.info(f"Verify Project ID '{clean_id}' and Host '{H}' match your Supabase settings.")
+            st.sidebar.error("❌ App Connection Failed")
+            st.error("🚨 Connection Handshake Rejected")
             st.code(str(e))
             st.stop()
 
@@ -100,13 +97,11 @@ def load_master_data():
     try:
         df = pd.read_sql("SELECT * FROM transactions", engine)
         if df.empty: return df
-        # Data Cleaning
         df['Units'] = pd.to_numeric(df['Units'], errors='coerce').fillna(0)
         df['Sum Of Total Incl Vat'] = pd.to_numeric(df['Sum Of Total Incl Vat'], errors='coerce').fillna(0)
         df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
         df = df.dropna(subset=['Trans_date', 'Owner Detail', 'Building Detail'])
         
-        # Display Helpers
         df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m')
         df['Month'] = df['Trans_date'].dt.strftime('%B')
         df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str)
@@ -134,7 +129,7 @@ def gen_p(df, title):
     try: return pdf.output(dest='S').encode('latin-1')
     except: return pdf.output()
 
-# --- 5. LOGIN SCREEN ---
+# --- 5. LOGIN HANDSHAKE ---
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
@@ -158,7 +153,7 @@ if not st.session_state['logged_in']:
             else: st.error("Access Denied: Invalid Credentials")
     st.stop()
 
-# --- 6. NAVIGATION ---
+# --- 6. NAVIGATION & SIDEBAR ---
 raw_df = load_master_data()
 
 with st.sidebar:
@@ -187,14 +182,14 @@ with st.sidebar:
 working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
 if st.session_state['current_page'] == "Dashboard":
-    if working_df.empty: st.warning("No data found. Please sync a transactions file.")
+    if working_df.empty: st.warning("No transaction data found. Please use Data Sync inside an Admin session.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
         sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
         fdf = working_df[working_df['Building Detail'].isin(sb)]
         
         if not fdf.empty:
-            # 1. BREAKDOWN (FIRST)
+            # 1. MONTHLY STATEMENT BREAKDOWN (FIRST)
             st.subheader("📋 Monthly Breakdown")
             summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters'})
             st.dataframe(summary.style.format("R {:,.2f}", subset=['Sales']), use_container_width=True)
@@ -213,19 +208,19 @@ if st.session_state['current_page'] == "Dashboard":
                         st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
 
             st.divider()
-            # 2. TOP 10 (SECOND)
+            # 2. TOP 10 HIGHEST TRANSACTIONS (SECOND)
             st.subheader("🏆 Top 10 Highest Transactions")
             st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
 
             st.divider()
-            # 3. PERFORMANCE TREND (THIRD)
+            # 3. PERFORMANCE TREND LINE GRAPH (THIRD)
             st.subheader("📈 Performance Trend")
             st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
 
             st.divider()
-            # 4. SEARCH (LAST)
+            # 4. SEARCH ALL TRANSACTIONS (LAST)
             st.subheader("🔎 Search All Transactions")
-            q = st.text_input("Filter results by keyword...")
+            q = st.text_input("Filter transactions by keyword...")
             res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
             st.write(f"Showing {len(res)} results:")
             st.dataframe(res, use_container_width=True)
@@ -235,8 +230,8 @@ elif st.session_state['current_page'] == "Analytics":
     if working_df.empty: st.warning("No data.")
     else:
         c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Distribution"), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client Account"), use_container_width=True)
+        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Mix"), use_container_width=True)
+        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client"), use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
