@@ -155,7 +155,6 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_draw_color(30, 58, 138)
     pdf.set_font("Helvetica", 'B', 8)
     
-    # DYNAMIC COLUMNS CALCULATOR FOR THE PDF WRITER ENGINE
     has_period = 'Period' in summary_df.columns
     has_meter = 'Meter Number' in summary_df.columns
     
@@ -171,7 +170,6 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     col_w.extend([18, 28, 28, 28, 22, 25, 18])
     headers.extend(["UTILITY", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"])
     
-    # Adjust last column sizing to snap layout flush to right edge (273mm max body space)
     total_w = sum(col_w)
     if total_w < 273:
         col_w[-1] += (273 - total_w)
@@ -201,7 +199,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
             
         pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
-        pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[idx] if 'idx' in locals() else col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -378,6 +376,16 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
+        # FEATURE FIXED: Added top-level summary metrics cards reflecting the selected timeline window
+        dash_kpi1, dash_kpi2 = st.columns(2)
+        with dash_kpi1:
+            st.metric("Selected Period Gross Sales", f"R {fdf['Sum Of Total Incl Vat'].sum():,.2f}")
+        with dash_kpi2:
+            st.metric("Selected Period Total Consumption", f"{fdf['Units'].sum():,.2f} Units")
+            
+        st.divider()
+        
+        # 1. PERFORMANCE TREND BAR GRAPH
         st.subheader("📈 Performance Trend")
         trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
         st.plotly_chart(px.bar(
@@ -492,7 +500,6 @@ elif st.session_state['current_page'] == "Reporting":
     else:
         st.markdown("### 📊 Financial Revenue & Sales Report Factory")
         
-        # FEATURE: NEW DEDICATED INDEPENDENT ON-CANVAS REPORTING PARAMETERS PANEL
         st.write("#### 🔍 Filter Reporting Window & Structure")
         rc1, rc2 = st.columns(2)
         
@@ -508,17 +515,14 @@ elif st.session_state['current_page'] == "Reporting":
                 ["Consolidate Total for Selected Period", "Split by Month Rows"]
             )
             
-        # Apply reporting-specific time constraints
         rpt_fdf = working_df[(working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())) & (working_df['Display_Month'].isin(local_months_selected))]
         
         if rpt_fdf.empty:
             st.warning("No data rows locate within current date/building selector configurations.")
         else:
-            # Build Grouping Array dynamically based on Owner Filter and Consolidation Mode
             group_cols = []
             rename_dict = {}
             
-            # Establish chronological keys depending on consolidation rules
             if consolidation_mode == "Split by Month Rows":
                 group_cols.extend(['Display_Month', 'Year_Month_Key'])
                 rename_dict['Display_Month'] = 'Period'
@@ -526,7 +530,6 @@ elif st.session_state['current_page'] == "Reporting":
             group_cols.append('Building Detail')
             rename_dict['Building Detail'] = 'Building Location'
             
-            # Establish structural meter key variations depending on Owner Scope
             if st.session_state['sel_owner'] != "All Owners":
                 group_cols.append('Meter Number')
                 rename_dict['Meter Number'] = 'Meter Number'
@@ -534,7 +537,6 @@ elif st.session_state['current_page'] == "Reporting":
             group_cols.append('Service Resource')
             rename_dict['Service Resource'] = 'Utility Type'
             
-            # Append calculation arrays
             rename_dict.update({
                 'Sum Of Total Incl Vat': 'Gross Sales',
                 'Payment To Principle': 'Net To Principle',
@@ -553,23 +555,13 @@ elif st.session_state['current_page'] == "Reporting":
                 'Unique Id': 'count'
             }).reset_index()
             
-            # Sort strings chronologically if present
             if "Year_Month_Key" in rpt_grouped.columns:
                 rpt_grouped = rpt_grouped.sort_values(['Year_Month_Key', 'Building Detail'])
             else:
                 rpt_grouped = rpt_grouped.sort_values(['Building Detail'])
                 
             rpt_display = rpt_grouped.rename(columns=rename_dict)
-            
-            # Compute KPI aggregate blocks
-            totals = {
-                'gross': rpt_display['Gross Sales'].sum(), 
-                'net': rpt_display['Net To Principle'].sum(), 
-                'fees': rpt_display['Service Fees'].sum(), 
-                'vat': rpt_display['VAT'].sum(), 
-                'units': rpt_display['Units Consumed'].sum(), 
-                'tx_count': rpt_display['Transactions'].sum()
-            }
+            totals = {'gross': rpt_display['Gross Sales'].sum(), 'net': rpt_display['Net To Principle'].sum(), 'fees': rpt_display['Service Fees'].sum(), 'vat': rpt_display['VAT'].sum(), 'units': rpt_display['Units Consumed'].sum(), 'tx_count': rpt_display['Transactions'].sum()}
             
             st.divider()
             m1, m2, m3, m4 = st.columns(4)
