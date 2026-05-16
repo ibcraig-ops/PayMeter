@@ -42,7 +42,7 @@ except Exception as e:
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
-st.set_page_config(page_title="Landlord Executive Portal", page_icon="logo.png", layout="wide")
+st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -78,63 +78,66 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", 'B', 18)
     pdf.set_xy(80, 8)
-    pdf.cell(205, 8, "EXECUTIVE SALES & UTILITY REVENUE REPORT", ln=0, align='R')
+    pdf.cell(205, 8, "EXECUTIVE SALES & UTILITY REVENUE REPORT", align='R')
     pdf.set_font("Helvetica", 'I', 10)
     pdf.set_xy(80, 18)
-    pdf.cell(205, 5, clean_txt(f"Portfolio Scope: {portfolio_label}   |   Reporting Window: {period_label}"), ln=0, align='R')
+    pdf.cell(205, 5, clean_txt(f"Portfolio Scope: {portfolio_label}   |   Reporting Window: {period_label}"), align='R')
     
     pdf.set_text_color(51, 65, 85) 
     pdf.set_font("Helvetica", size=9)
     pdf.set_xy(12, 38)
-    pdf.cell(100, 5, f"Document ID: ISR-{random.randint(100000, 999999)}", ln=1)
+    pdf.cell(100, 5, f"Document ID: ISR-{random.randint(100000, 999999)}")
+    pdf.ln(5)
     pdf.set_x(12)
-    pdf.cell(100, 5, f"Generated On: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=1)
-    pdf.ln(4)
+    pdf.cell(100, 5, f"Generated On: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    pdf.ln(9)
     
     pdf.set_fill_color(241, 245, 249) 
     pdf.set_draw_color(226, 232, 240)
     
+    # KPI 1
     pdf.rect(12, 50, 62, 18, 'DF')
     pdf.set_xy(14, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(58, 4, "TOTAL GROSS SALES", ln=1)
+    pdf.cell(58, 4, "TOTAL GROSS SALES")
     pdf.set_xy(14, 57)
     pdf.set_font("Helvetica", 'B', 12)
     pdf.set_text_color(13, 148, 136) 
-    pdf.cell(58, 8, f"R {total_metrics['gross']:,.2f}", ln=1)
+    pdf.cell(58, 8, f"R {total_metrics['gross']:,.2f}")
     
+    # KPI 2
     pdf.set_text_color(51, 65, 85)
     pdf.rect(80, 50, 62, 18, 'DF')
     pdf.set_xy(82, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(58, 4, "PRINCIPLE REVENUE SHARE", ln=1)
+    pdf.cell(58, 4, "PRINCIPLE REVENUE SHARE")
     pdf.set_xy(82, 57)
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(58, 8, f"R {total_metrics['net']:,.2f}", ln=1)
+    pdf.cell(58, 8, f"R {total_metrics['net']:,.2f}")
     
+    # KPI 3
     pdf.rect(148, 50, 62, 18, 'DF')
     pdf.set_xy(150, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(58, 4, "TOTAL SERVICE FEES", ln=1)
+    pdf.cell(58, 4, "TOTAL SERVICE FEES")
     pdf.set_xy(150, 57)
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(58, 8, f"R {total_metrics['fees']:,.2f}", ln=1)
+    pdf.cell(58, 8, f"R {total_metrics['fees']:,.2f}")
     
+    # KPI 4
     pdf.rect(216, 50, 69, 18, 'DF')
     pdf.set_xy(218, 52)
     pdf.set_font("Helvetica", '', 8)
-    pdf.cell(65, 4, "CUMULATIVE UNITS CONSUMED", ln=1)
+    pdf.cell(65, 4, "CUMULATIVE UNITS CONSUMED")
     pdf.set_xy(218, 57)
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(65, 8, f"{total_metrics['units']:,.2f} Units", ln=1)
+    pdf.cell(65, 8, f"{total_metrics['units']:,.2f} Units")
     
-    pdf.ln(12)
-    
+    pdf.set_xy(12, 74)
     pdf.set_font("Helvetica", 'B', 10)
     pdf.set_text_color(30, 58, 138)
-    pdf.set_x(12)
-    pdf.cell(200, 6, "DETAILED REVENUE BREAKDOWN BY ASSET LOCATION", ln=1)
-    pdf.ln(2)
+    pdf.cell(200, 6, "DETAILED REVENUE BREAKDOWN BY ASSET LOCATION")
+    pdf.ln(8)
     
     pdf.set_fill_color(30, 58, 138)
     pdf.set_text_color(255, 255, 255)
