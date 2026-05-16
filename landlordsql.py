@@ -155,14 +155,26 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_draw_color(30, 58, 138)
     pdf.set_font("Helvetica", 'B', 8)
     
-    # FIXED: Re-engineered to support multi-column layout tracking adjustments dynamically
+    # DYNAMIC COLUMNS CALCULATOR FOR THE PDF WRITER ENGINE
+    has_period = 'Period' in summary_df.columns
     has_meter = 'Meter Number' in summary_df.columns
+    
+    col_w = []
+    headers = []
+    
+    if has_period:
+        col_w.append(18); headers.append("PERIOD")
+    col_w.append(55); headers.append("BUILDING DETAIL")
     if has_meter:
-        col_w = [18, 50, 32, 18, 30, 30, 30, 22, 25, 18]
-        headers = ["PERIOD", "BUILDING DETAIL", "METER NUMBER", "UTILITY", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"]
-    else:
-        col_w = [22, 63, 24, 33, 33, 33, 22, 23, 20]
-        headers = ["PERIOD", "BUILDING DETAIL", "UTILITY", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"]
+        col_w.append(30); headers.append("METER NUMBER")
+        
+    col_w.extend([18, 28, 28, 28, 22, 25, 18])
+    headers.extend(["UTILITY", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"])
+    
+    # Adjust last column sizing to snap layout flush to right edge (273mm max body space)
+    total_w = sum(col_w)
+    if total_w < 273:
+        col_w[-1] += (273 - total_w)
     
     pdf.set_x(12)
     for w, h in zip(col_w, headers): pdf.cell(w, 8, h, 1, 0, 'C', True)
@@ -178,13 +190,14 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
         if toggle_fill: pdf.set_fill_color(248, 250, 252)
         else: pdf.set_fill_color(255, 255, 255)
             
-        pdf.cell(col_w[0], 7, clean_txt(r['Period']), 1, 0, 'C', True)
-        pdf.cell(col_w[1], 7, clean_txt(r['Building Location'])[:24] if has_meter else clean_txt(r['Building Location'])[:34], 1, 0, 'L', True)
+        c_idx = 0
+        if has_period:
+            pdf.cell(col_w[c_idx], 7, clean_txt(r['Period']), 1, 0, 'C', True); c_idx += 1
+            
+        pdf.cell(col_w[c_idx], 7, clean_txt(r['Building Location'])[:26], 1, 0, 'L', True); c_idx += 1
         
-        c_idx = 2
         if has_meter:
-            pdf.cell(col_w[c_idx], 7, clean_txt(r['Meter Number']), 1, 0, 'C', True)
-            c_idx += 1
+            pdf.cell(col_w[c_idx], 7, clean_txt(r['Meter Number']), 1, 0, 'C', True); c_idx += 1
             
         pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -200,14 +213,15 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_font("Helvetica", 'B', 8)
     pdf.set_fill_color(226, 232, 240)
     
-    if has_meter:
-        descriptive_w = col_w[0] + col_w[1] + col_w[2] + col_w[3]
-        start_num_idx = 4
-    else:
-        descriptive_w = col_w[0] + col_w[1] + col_w[2]
-        start_num_idx = 3
-        
+    descriptive_w = 55
+    if has_period: descriptive_w += 18
+    if has_meter: descriptive_w += 30
+    
     pdf.cell(descriptive_w, 8, "PORTFOLIO AGGREGATE TOTALS", 1, 0, 'L', True)
+    
+    start_num_idx = 1
+    if has_period: start_num_idx += 1
+    if has_meter: start_num_idx += 1
     
     c_idx = start_num_idx
     pdf.cell(col_w[c_idx], 8, f"R {total_metrics['gross']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -470,71 +484,123 @@ elif st.session_state['current_page'] == "Analytics":
         with c3: st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Units'].sum().reset_index(), x='Year_Month_Key', y='Units', markers=True, title="Consumption Volatility Trend (Units)"), use_container_width=True)
         with c4: st.plotly_chart(px.bar(fdf.groupby('Building Detail')['Sum Of Total Incl Vat'].sum().reset_index().sort_values('Sum Of Total Incl Vat', ascending=False).head(15), y='Building Detail', x='Sum Of Total Incl Vat', orientation='h', title="Top 15 Buildings by Billings Gross"), use_container_width=True)
 
+# --- 11. REPORTING SUITE PAGE ---
 elif st.session_state['current_page'] == "Reporting":
     st.title("🗂️ Executive Reporting Suite")
-    if fdf.empty: st.info("Please adjust filters in the left sidebar configuration panel.")
+    if working_df.empty:
+        st.info("Please sync asset profiles to access report generation frameworks.")
     else:
         st.markdown("### 📊 Financial Revenue & Sales Report Factory")
         
-        # FIXED: Injected adaptive column grouping to show granular meter lines when individual profiles are active
-        if st.session_state['sel_owner'] == "All Owners":
-            group_cols = ['Display_Month', 'Year_Month_Key', 'Building Detail', 'Service Resource']
-            rename_dict = {
-                'Display_Month': 'Period', 
-                'Building Detail': 'Building Location', 
-                'Service Resource': 'Utility Type', 
-                'Sum Of Total Incl Vat': 'Gross Sales', 
-                'Payment To Principle': 'Net To Principle', 
-                'Total Service Fee Incl Vat': 'Service Fees', 
-                'Vat': 'VAT', 
-                'Units': 'Units Consumed', 
-                'Unique Id': 'Transactions'
-            }
+        # FEATURE: NEW DEDICATED INDEPENDENT ON-CANVAS REPORTING PARAMETERS PANEL
+        st.write("#### 🔍 Filter Reporting Window & Structure")
+        rc1, rc2 = st.columns(2)
+        
+        with rc1:
+            local_months_selected = st.multiselect(
+                "Filter Active Report Months:", 
+                chron_timeline, 
+                default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline
+            )
+        with rc2:
+            consolidation_mode = st.selectbox(
+                "Meter Rows Grouping Structure:",
+                ["Consolidate Total for Selected Period", "Split by Month Rows"]
+            )
+            
+        # Apply reporting-specific time constraints
+        rpt_fdf = working_df[(working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())) & (working_df['Display_Month'].isin(local_months_selected))]
+        
+        if rpt_fdf.empty:
+            st.warning("No data rows locate within current date/building selector configurations.")
         else:
-            group_cols = ['Display_Month', 'Year_Month_Key', 'Building Detail', 'Meter Number', 'Service Resource']
-            rename_dict = {
-                'Display_Month': 'Period', 
-                'Building Detail': 'Building Location', 
-                'Meter Number': 'Meter Number',
-                'Service Resource': 'Utility Type', 
-                'Sum Of Total Incl Vat': 'Gross Sales', 
-                'Payment To Principle': 'Net To Principle', 
-                'Total Service Fee Incl Vat': 'Service Fees', 
-                'Vat': 'VAT', 
-                'Units': 'Units Consumed', 
+            # Build Grouping Array dynamically based on Owner Filter and Consolidation Mode
+            group_cols = []
+            rename_dict = {}
+            
+            # Establish chronological keys depending on consolidation rules
+            if consolidation_mode == "Split by Month Rows":
+                group_cols.extend(['Display_Month', 'Year_Month_Key'])
+                rename_dict['Display_Month'] = 'Period'
+                
+            group_cols.append('Building Detail')
+            rename_dict['Building Detail'] = 'Building Location'
+            
+            # Establish structural meter key variations depending on Owner Scope
+            if st.session_state['sel_owner'] != "All Owners":
+                group_cols.append('Meter Number')
+                rename_dict['Meter Number'] = 'Meter Number'
+                
+            group_cols.append('Service Resource')
+            rename_dict['Service Resource'] = 'Utility Type'
+            
+            # Append calculation arrays
+            rename_dict.update({
+                'Sum Of Total Incl Vat': 'Gross Sales',
+                'Payment To Principle': 'Net To Principle',
+                'Total Service Fee Incl Vat': 'Service Fees',
+                'Vat': 'VAT',
+                'Units': 'Units Consumed',
                 'Unique Id': 'Transactions'
+            })
+            
+            rpt_grouped = rpt_fdf.groupby(group_cols).agg({
+                'Sum Of Total Incl Vat': 'sum', 
+                'Payment To Principle': 'sum', 
+                'Total Service Fee Incl Vat': 'sum', 
+                'Vat': 'sum', 
+                'Units': 'sum', 
+                'Unique Id': 'count'
+            }).reset_index()
+            
+            # Sort strings chronologically if present
+            if "Year_Month_Key" in rpt_grouped.columns:
+                rpt_grouped = rpt_grouped.sort_values(['Year_Month_Key', 'Building Detail'])
+            else:
+                rpt_grouped = rpt_grouped.sort_values(['Building Detail'])
+                
+            rpt_display = rpt_grouped.rename(columns=rename_dict)
+            
+            # Compute KPI aggregate blocks
+            totals = {
+                'gross': rpt_display['Gross Sales'].sum(), 
+                'net': rpt_display['Net To Principle'].sum(), 
+                'fees': rpt_display['Service Fees'].sum(), 
+                'vat': rpt_display['VAT'].sum(), 
+                'units': rpt_display['Units Consumed'].sum(), 
+                'tx_count': rpt_display['Transactions'].sum()
             }
             
-        rpt_grouped = fdf.groupby(group_cols).agg({
-            'Sum Of Total Incl Vat': 'sum', 
-            'Payment To Principle': 'sum', 
-            'Total Service Fee Incl Vat': 'sum', 
-            'Vat': 'sum', 
-            'Units': 'sum', 
-            'Unique Id': 'count'
-        }).reset_index().sort_values(['Year_Month_Key', 'Building Detail'])
-        
-        rpt_display = rpt_grouped.rename(columns=rename_dict)
-        totals = {'gross': rpt_display['Gross Sales'].sum(), 'net': rpt_display['Net To Principle'].sum(), 'fees': rpt_display['Service Fees'].sum(), 'vat': rpt_display['VAT'].sum(), 'units': rpt_display['Units Consumed'].sum(), 'tx_count': rpt_display['Transactions'].sum()}
-        
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Gross Revenue", f"R {totals['gross']:,.2f}")
-        m2.metric("Principle Payout Share", f"R {totals['net']:,.2f}")
-        m3.metric("Service Fees Retained", f"R {totals['fees']:,.2f}")
-        m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
-        
-        st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
-        
-        exp_col1, exp_col2 = st.columns(2)
-        window_label = f"Selected Range ({len(selected_months)} Months)" if len(selected_months) < len(chron_timeline) else "Full Historical Portfolio Range"
-        with exp_col1:
-            xl_buffer = io.BytesIO()
-            with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
-            st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
-        with exp_col2:
-            if FPDF:
-                pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display, total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
-                if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
+            st.divider()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Gross Revenue", f"R {totals['gross']:,.2f}")
+            m2.metric("Principle Payout Share", f"R {totals['net']:,.2f}")
+            m3.metric("Service Fees Retained", f"R {totals['fees']:,.2f}")
+            m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
+            
+            st.write("#### 📑 Sales Report Data Grid Preview")
+            st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({
+                'Gross Sales': 'R {:,.2f}', 
+                'Net To Principle': 'R {:,.2f}', 
+                'Service Fees': 'R {:,.2f}', 
+                'VAT': 'R {:,.2f}', 
+                'Units Consumed': '{:,.2f}'
+            }), use_container_width=True)
+            
+            st.markdown("#### 📥 Document Compilation & Export Options")
+            exp_col1, exp_col2 = st.columns(2)
+            
+            window_label = f"Selected Range ({len(local_months_selected)} Months)" if len(local_months_selected) < len(chron_timeline) else "Full Historical Portfolio Range"
+            
+            with exp_col1:
+                xl_buffer = io.BytesIO()
+                with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: 
+                    rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
+                st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
+            with exp_col2:
+                if FPDF:
+                    pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display.drop(columns=['Year_Month_Key'], errors='ignore'), total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
+                    if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
