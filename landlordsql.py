@@ -270,7 +270,6 @@ def update_user_password(u, p):
         conn.commit()
     return True
 
-# FEATURE: Purge function added to safely remove targeted landlord access accounts
 def delete_user(u):
     query = text("DELETE FROM users WHERE username = :u")
     with engine.connect() as conn:
@@ -384,11 +383,19 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
-        dash_kpi1, dash_kpi2 = st.columns(2)
+        # --- FIXED BLOCK: 4-COLUMN UTILITY SPECIFIC EXECUTIVES METRIC PANEL ---
+        elec_sub = fdf[fdf['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in fdf.columns else pd.DataFrame()
+        water_sub = fdf[fdf['Service Resource'].str.lower() == 'water'] if 'Service Resource' in fdf.columns else pd.DataFrame()
+        
+        dash_kpi1, dash_kpi2, dash_kpi3, dash_kpi4 = st.columns(4)
         with dash_kpi1:
-            st.metric("Selected Period Gross Sales", f"R {fdf['Sum Of Total Incl Vat'].sum():,.2f}")
+            st.metric("Electricity Sales", f"R {elec_sub['Sum Of Total Incl Vat'].sum():,.2f}")
         with dash_kpi2:
-            st.metric("Selected Period Total Consumption", f"{fdf['Units'].sum():,.2f} Units")
+            st.metric("Electricity Consumption", f"{elec_sub['Units'].sum():,.2f} Units")
+        with dash_kpi3:
+            st.metric("Water Sales", f"R {water_sub['Sum Of Total Incl Vat'].sum():,.2f}")
+        with dash_kpi4:
+            st.metric("Water Consumption", f"{water_sub['Units'].sum():,.2f} Units")
             
         st.divider()
         
@@ -653,7 +660,6 @@ elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
-    # FEATURE FIXED: Added third "Delete User" tab to handle administrative user purge operations
     t1, t2, t3 = st.tabs(["Add Landlord", "Reset Password", "Delete User"])
     with t1:
         with st.form("create_landlord"):
@@ -665,7 +671,6 @@ elif st.session_state['current_page'] == "UserAdmin":
         npw = st.text_input("New Password", type="password")
         if st.button("Update Access"): update_user_password(ur, npw); st.success("Access Updated.")
     with t3:
-        # Prevent the logged-in administrator from deleting their own root profile
         delete_opts = [un for un in u_df['username'].tolist() if un != "admin"]
         if not delete_opts:
             st.info("No landlord tracking sub-accounts currently available to purge.")
