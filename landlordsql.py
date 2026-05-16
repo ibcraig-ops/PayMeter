@@ -41,7 +41,7 @@ except Exception as e:
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
-st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
+st.set_page_config(page_title="Landlord Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -339,7 +339,6 @@ if st.session_state['current_page'] == "Dashboard":
         # 2. MONTHLY BREAKDOWN WITH DYNAMIC GROUPING BY OWNERSHIP FILTER
         st.subheader("📋 Monthly Breakdown")
         
-        # FIXED: Check if 'All Owners' is active. If yes, aggregate ONLY by month (1 row per month)
         if st.session_state['sel_owner'] == "All Owners":
             summary = fdf.groupby(['Year_Month_Key']).agg({
                 'Sum Of Total Incl Vat': 'sum', 
@@ -354,7 +353,6 @@ if st.session_state['current_page'] == "Dashboard":
             })
             summary_flat = summary.reset_index()
             
-            # Formulate consolidated totals bottom bar
             total_row = pd.DataFrame([{
                 'Year_Month_Key': 'Grand Total',
                 'Sales': summary_flat['Sales'].sum(),
@@ -363,7 +361,6 @@ if st.session_state['current_page'] == "Dashboard":
                 'Transactions': int(summary_flat['Transactions'].sum())
             }])
         else:
-            # Individual owner profile is targeted, show detailed tracking splits
             summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({
                 'Sum Of Total Incl Vat': 'sum', 
                 'Units': 'sum', 
@@ -387,6 +384,13 @@ if st.session_state['current_page'] == "Dashboard":
             }])
         
         summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
+        
+        # --- HARDENED TYPE ENFORCEMENT LAYER ---
+        # Ensures pandas forces underlying structural column formats back into numeric dtypes
+        summary_with_total['Sales'] = pd.to_numeric(summary_with_total['Sales'], errors='coerce').fillna(0)
+        summary_with_total['Consumption'] = pd.to_numeric(summary_with_total['Consumption'], errors='coerce').fillna(0)
+        summary_with_total['Meters'] = pd.to_numeric(summary_with_total['Meters'], errors='coerce').fillna(0).astype(int)
+        summary_with_total['Transactions'] = pd.to_numeric(summary_with_total['Transactions'], errors='coerce').fillna(0).astype(int)
         
         st.dataframe(summary_with_total.style.format({
             'Sales': 'R {:,.2f}', 
