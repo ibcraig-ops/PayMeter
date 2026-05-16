@@ -71,7 +71,6 @@ def gen_p(df, title):
             txt = f"{v:,.2f}" if isinstance(v, (float, int)) else str(v)[:14]
             pdf.cell(32, 10, clean_txt(txt), 1)
         pdf.ln()
-    # FIXED: Hardened to return strict binary streams for stream handlers
     return bytes(pdf.output())
 
 # --- 5. EXECUTIVE EXECUTIVE PDF REPORT TEMPLATE ---
@@ -110,7 +109,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_fill_color(241, 245, 249) 
     pdf.set_draw_color(226, 232, 240)
     
-    # KPI 1
+    # KPI Blocks
     pdf.rect(12, 50, 62, 18, 'DF')
     pdf.set_xy(14, 52)
     pdf.set_font("Helvetica", '', 8)
@@ -120,7 +119,6 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_text_color(13, 148, 136) 
     pdf.cell(58, 8, f"R {total_metrics['gross']:,.2f}")
     
-    # KPI 2
     pdf.set_text_color(51, 65, 85)
     pdf.rect(80, 50, 62, 18, 'DF')
     pdf.set_xy(82, 52)
@@ -130,7 +128,6 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(58, 8, f"R {total_metrics['net']:,.2f}")
     
-    # KPI 3
     pdf.rect(148, 50, 62, 18, 'DF')
     pdf.set_xy(150, 52)
     pdf.set_font("Helvetica", '', 8)
@@ -139,7 +136,6 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(58, 8, f"R {total_metrics['fees']:,.2f}")
     
-    # KPI 4
     pdf.rect(216, 50, 69, 18, 'DF')
     pdf.set_xy(218, 52)
     pdf.set_font("Helvetica", '', 8)
@@ -159,8 +155,14 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.set_draw_color(30, 58, 138)
     pdf.set_font("Helvetica", 'B', 8)
     
-    col_w = [22, 63, 24, 33, 33, 33, 22, 23, 20]
-    headers = ["PERIOD", "BUILDING DETAIL", "UTILITY", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"]
+    # FIXED: Re-engineered to support multi-column layout tracking adjustments dynamically
+    has_meter = 'Meter Number' in summary_df.columns
+    if has_meter:
+        col_w = [18, 50, 32, 18, 30, 30, 30, 22, 25, 18]
+        headers = ["PERIOD", "BUILDING DETAIL", "METER NUMBER", "UTILITY", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"]
+    else:
+        col_w = [22, 63, 24, 33, 33, 33, 22, 23, 20]
+        headers = ["PERIOD", "BUILDING DETAIL", "UTILITY", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"]
     
     pdf.set_x(12)
     for w, h in zip(col_w, headers): pdf.cell(w, 8, h, 1, 0, 'C', True)
@@ -177,29 +179,44 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
         else: pdf.set_fill_color(255, 255, 255)
             
         pdf.cell(col_w[0], 7, clean_txt(r['Period']), 1, 0, 'C', True)
-        pdf.cell(col_w[1], 7, clean_txt(r['Building Location'])[:34], 1, 0, 'L', True)
-        pdf.cell(col_w[2], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True)
-        pdf.cell(col_w[3], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True)
-        pdf.cell(col_w[4], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True)
-        pdf.cell(col_w[5], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True)
-        pdf.cell(col_w[6], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True)
-        pdf.cell(col_w[7], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True)
-        pdf.cell(col_w[8], 7, f"{int(r['Transactions'])}", 1, 0, 'C', True)
+        pdf.cell(col_w[1], 7, clean_txt(r['Building Location'])[:24] if has_meter else clean_txt(r['Building Location'])[:34], 1, 0, 'L', True)
+        
+        c_idx = 2
+        if has_meter:
+            pdf.cell(col_w[c_idx], 7, clean_txt(r['Meter Number']), 1, 0, 'C', True)
+            c_idx += 1
+            
+        pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"{int(r['Transactions'])}", 1, 0, 'C', True)
         pdf.ln()
         toggle_fill = not toggle_fill
         
     pdf.set_x(12)
     pdf.set_font("Helvetica", 'B', 8)
     pdf.set_fill_color(226, 232, 240)
-    pdf.cell(col_w[0] + col_w[1] + col_w[2], 8, "PORTFOLIO AGGREGATE TOTALS", 1, 0, 'L', True)
-    pdf.cell(col_w[3], 8, f"R {total_metrics['gross']:,.2f}", 1, 0, 'R', True)
-    pdf.cell(col_w[4], 8, f"R {total_metrics['net']:,.2f}", 1, 0, 'R', True)
-    pdf.cell(col_w[5], 8, f"R {total_metrics['fees']:,.2f}", 1, 0, 'R', True)
-    pdf.cell(col_w[6], 8, f"R {total_metrics['vat']:,.2f}", 1, 0, 'R', True)
-    pdf.cell(col_w[7], 8, f"{total_metrics['units']:,.2f}", 1, 0, 'R', True)
-    pdf.cell(col_w[8], 8, f"{int(total_metrics['tx_count'])}", 1, 0, 'C', True)
     
-    # FIXED: Hardened to return strict binary streams for stream handlers
+    if has_meter:
+        descriptive_w = col_w[0] + col_w[1] + col_w[2] + col_w[3]
+        start_num_idx = 4
+    else:
+        descriptive_w = col_w[0] + col_w[1] + col_w[2]
+        start_num_idx = 3
+        
+    pdf.cell(descriptive_w, 8, "PORTFOLIO AGGREGATE TOTALS", 1, 0, 'L', True)
+    
+    c_idx = start_num_idx
+    pdf.cell(col_w[c_idx], 8, f"R {total_metrics['gross']:,.2f}", 1, 0, 'R', True); c_idx += 1
+    pdf.cell(col_w[c_idx], 8, f"R {total_metrics['net']:,.2f}", 1, 0, 'R', True); c_idx += 1
+    pdf.cell(col_w[c_idx], 8, f"R {total_metrics['fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
+    pdf.cell(col_w[c_idx], 8, f"R {total_metrics['vat']:,.2f}", 1, 0, 'R', True); c_idx += 1
+    pdf.cell(col_w[c_idx], 8, f"{total_metrics['units']:,.2f}", 1, 0, 'R', True); c_idx += 1
+    pdf.cell(col_w[c_idx], 8, f"{int(total_metrics['tx_count'])}", 1, 0, 'C', True)
+    
     return bytes(pdf.output())
 
 # --- 6. DATABASE FUNCTIONS ---
@@ -458,8 +475,46 @@ elif st.session_state['current_page'] == "Reporting":
     if fdf.empty: st.info("Please adjust filters in the left sidebar configuration panel.")
     else:
         st.markdown("### 📊 Financial Revenue & Sales Report Factory")
-        rpt_grouped = fdf.groupby(['Display_Month', 'Year_Month_Key', 'Building Detail', 'Service Resource']).agg({'Sum Of Total Incl Vat': 'sum', 'Payment To Principle': 'sum', 'Total Service Fee Incl Vat': 'sum', 'Vat': 'sum', 'Units': 'sum', 'Unique Id': 'count'}).reset_index().sort_values(['Year_Month_Key', 'Building Detail'])
-        rpt_display = rpt_grouped.rename(columns={'Display_Month': 'Period', 'Building Detail': 'Building Location', 'Service Resource': 'Utility Type', 'Sum Of Total Incl Vat': 'Gross Sales', 'Payment To Principle': 'Net To Principle', 'Total Service Fee Incl Vat': 'Service Fees', 'Vat': 'VAT', 'Units': 'Units Consumed', 'Unique Id': 'Transactions'})
+        
+        # FIXED: Injected adaptive column grouping to show granular meter lines when individual profiles are active
+        if st.session_state['sel_owner'] == "All Owners":
+            group_cols = ['Display_Month', 'Year_Month_Key', 'Building Detail', 'Service Resource']
+            rename_dict = {
+                'Display_Month': 'Period', 
+                'Building Detail': 'Building Location', 
+                'Service Resource': 'Utility Type', 
+                'Sum Of Total Incl Vat': 'Gross Sales', 
+                'Payment To Principle': 'Net To Principle', 
+                'Total Service Fee Incl Vat': 'Service Fees', 
+                'Vat': 'VAT', 
+                'Units': 'Units Consumed', 
+                'Unique Id': 'Transactions'
+            }
+        else:
+            group_cols = ['Display_Month', 'Year_Month_Key', 'Building Detail', 'Meter Number', 'Service Resource']
+            rename_dict = {
+                'Display_Month': 'Period', 
+                'Building Detail': 'Building Location', 
+                'Meter Number': 'Meter Number',
+                'Service Resource': 'Utility Type', 
+                'Sum Of Total Incl Vat': 'Gross Sales', 
+                'Payment To Principle': 'Net To Principle', 
+                'Total Service Fee Incl Vat': 'Service Fees', 
+                'Vat': 'VAT', 
+                'Units': 'Units Consumed', 
+                'Unique Id': 'Transactions'
+            }
+            
+        rpt_grouped = fdf.groupby(group_cols).agg({
+            'Sum Of Total Incl Vat': 'sum', 
+            'Payment To Principle': 'sum', 
+            'Total Service Fee Incl Vat': 'sum', 
+            'Vat': 'sum', 
+            'Units': 'sum', 
+            'Unique Id': 'count'
+        }).reset_index().sort_values(['Year_Month_Key', 'Building Detail'])
+        
+        rpt_display = rpt_grouped.rename(columns=rename_dict)
         totals = {'gross': rpt_display['Gross Sales'].sum(), 'net': rpt_display['Net To Principle'].sum(), 'fees': rpt_display['Service Fees'].sum(), 'vat': rpt_display['VAT'].sum(), 'units': rpt_display['Units Consumed'].sum(), 'tx_count': rpt_display['Transactions'].sum()}
         
         m1, m2, m3, m4 = st.columns(4)
