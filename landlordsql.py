@@ -8,7 +8,6 @@ from datetime import datetime
 from sqlalchemy import create_engine, text
 
 # --- 1. SESSION STATE INITIALIZATION ---
-# Must run first to ensure no KeyErrors occur on page reloads
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 
@@ -30,7 +29,6 @@ try:
     PORT = scrub("DB_PORT")
     DB = scrub("DB_NAME")
     
-    # Cleans up and forces the mandatory 'postgres.project-id' pattern
     clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
     U = f"postgres.{clean_id}"
     
@@ -38,7 +36,7 @@ try:
     engine = create_engine(clean_url, pool_pre_ping=True)
 
 except Exception as e:
-    st.error("🚨 Configuration Error: Please check your Streamlit Secrets layout.")
+    st.error("🚨 Secret Configuration Error: Check your Streamlit Secrets.")
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
@@ -50,9 +48,7 @@ except ImportError:
     FPDF = None
 
 # --- 4. DATABASE FUNCTIONS ---
-
 def load_users():
-    """Queries user database or builds default admin if empty."""
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
         st.sidebar.success(f"✔️ Connected to Database")
@@ -153,7 +149,7 @@ if not st.session_state['logged_in']:
             else: st.error("Access Denied: Invalid Credentials")
     st.stop()
 
-# --- 6. NAVIGATION & SIDEBAR ---
+# --- 6. NAVIGATION & BASE SIDEBAR ---
 raw_df = load_master_data()
 
 with st.sidebar:
@@ -176,62 +172,91 @@ with st.sidebar:
     if not raw_df.empty and st.session_state['user_role'] == 'admin':
         opts = ["All Owners"] + sorted(raw_df['Owner Detail'].unique().tolist())
         st.session_state['sel_owner'] = st.selectbox("View Portfolio:", opts)
-    if st.button("Logout"): st.session_state['logged_in'] = False; st.rerun()
 
-# --- 7. PAGES ---
+# --- 7. GLOBAL PORTFOLIO FILTERING ---
 working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
+# Inject shared filter on viewable data pages
+if st.session_state['current_page'] in ["Dashboard", "Analytics"]:
+    if working_df.empty:
+        st.sidebar.warning("No data found.")
+        fdf = working_df
+    else:
+        with st.sidebar:
+            st.markdown("### 🔍 Filter Portfolio")
+            sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
+            st.divider()
+            if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+        fdf = working_df[working_df['Building Detail'].isin(sb)]
+else:
+    with st.sidebar:
+        if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+
+# --- 8. PAGES ---
+
 if st.session_state['current_page'] == "Dashboard":
-    if working_df.empty: st.warning("No transaction data found. Please use Data Sync inside an Admin session.")
+    if fdf.empty: st.warning("No data matches selected filters.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']}")
-        sb = st.multiselect("Filter Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
-        fdf = working_df[working_df['Building Detail'].isin(sb)]
         
-        if not fdf.empty:
-            # 1. MONTHLY STATEMENT BREAKDOWN (FIRST)
-            st.subheader("📋 Monthly Breakdown")
-            summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters'})
-            st.dataframe(summary.style.format("R {:,.2f}", subset=['Sales']), use_container_width=True)
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                xl = io.BytesIO()
-                with pd.ExcelWriter(xl) as wr: summary.to_excel(wr)
-                st.download_button("📥 Excel Export", xl.getvalue(), "Statement.xlsx")
-            with c2:
-                if FPDF:
-                    ex_m = sorted(fdf['Display_Month'].unique())
-                    sel_m = st.selectbox("Select Month for PDF", ex_m)
-                    if st.button("📥 Generate PDF"):
-                        m_data = fdf[fdf['Display_Month'] == sel_m].groupby('Building Detail').agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum'})
-                        st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
+        # 1. MONTHLY STATEMENT BREAKDOWN
+        st.subheader("📋 Monthly Breakdown")
+        summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters'})
+        st.dataframe(summary.style.format("R {:,.2f}", subset=['Sales']), use_container_width=True)
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            xl = io.BytesIO()
+            with pd.ExcelWriter(xl) as wr: summary.to_excel(wr)
+            st.download_button("📥 Excel Export", xl.getvalue(), "Statement.xlsx")
+        with c2:
+            if FPDF:
+                ex_m = sorted(fdf['Display_Month'].unique())
+                sel_m = st.selectbox("Select Month for PDF", ex_m)
+                if st.button("📥 Generate PDF"):
+                    m_data = fdf[fdf['Display_Month'] == sel_m].groupby('Building Detail').agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum'})
+                    st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
 
-            st.divider()
-            # 2. TOP 10 HIGHEST TRANSACTIONS (SECOND)
-            st.subheader("🏆 Top 10 Highest Transactions")
-            st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
+        st.divider()
+        # 2. TOP 10 HIGHEST TRANSACTIONS
+        st.subheader("🏆 Top 10 Highest Transactions")
+        st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
 
-            st.divider()
-            # 3. PERFORMANCE TREND LINE GRAPH (THIRD)
-            st.subheader("📈 Performance Trend")
-            st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
+        st.divider()
+        # 3. PERFORMANCE TREND LINE GRAPH
+        st.subheader("📈 Performance Trend")
+        st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index(), x='Year_Month_Key', y='Sum Of Total Incl Vat', markers=True), use_container_width=True)
 
-            st.divider()
-            # 4. SEARCH ALL TRANSACTIONS (LAST)
-            st.subheader("🔎 Search All Transactions")
-            q = st.text_input("Filter transactions by keyword...")
-            res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
-            st.write(f"Showing {len(res)} results:")
-            st.dataframe(res, use_container_width=True)
+        st.divider()
+        # 4. SEARCH ALL TRANSACTIONS
+        st.subheader("🔎 Search All Transactions")
+        q = st.text_input("Filter transactions by keyword...")
+        res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
+        st.write(f"Showing {len(res)} results:")
+        st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
     st.title("📈 Portfolio Analytics")
-    if working_df.empty: st.warning("No data.")
+    if fdf.empty: st.warning("Select buildings from the sidebar filter to populate analytics dashboards.")
     else:
+        # Row 1: Resource Distributions
         c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(working_df, values='Sum Of Total Incl Vat', names='Service Resource', title="Resource Mix"), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(working_df.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue per Client"), use_container_width=True)
+        with c1: 
+            st.plotly_chart(px.pie(fdf, values='Sum Of Total Incl Vat', names='Service Resource', title="Revenue Mix by Service Type (Electricity, Water, Gas)"), use_container_width=True)
+        with c2: 
+            client_revenue = fdf.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index()
+            st.plotly_chart(px.bar(client_revenue, x='Client', y='Sum Of Total Incl Vat', title="Revenue contribution per Client Account", labels={'Sum Of Total Incl Vat':'Total Revenue (R)'}), use_container_width=True)
+        
+        st.divider()
+        
+        # Row 2: Trends and Comparisons
+        c3, c4 = st.columns(2)
+        with c3:
+            consumption_trend = fdf.groupby('Year_Month_Key')['Units'].sum().reset_index()
+            st.plotly_chart(px.line(consumption_trend, x='Year_Month_Key', y='Units', markers=True, title="Monthly Consumption Velocity (Total Units / kWh)", labels={'Units':'Units Consumed'}), use_container_width=True)
+        with c4:
+            building_comp = fdf.groupby('Building Detail')['Sum Of Total Incl Vat'].sum().reset_index().sort_values('Sum Of Total Incl Vat', ascending=False).head(15)
+            st.plotly_chart(px.bar(building_comp, y='Building Detail', x='Sum Of Total Incl Vat', orientation='h', title="Top 15 Revenue-Generating Buildings", labels={'Sum Of Total Incl Vat':'Total Sales (R)'}), use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
