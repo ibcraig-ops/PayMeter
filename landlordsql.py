@@ -19,7 +19,7 @@ if 'logged_in' not in st.session_state:
         'sel_owner': "All Owners"
     })
 
-# --- 2. DATABASE CONFIGURATION (UNLOCKED DIAGNOSTICS) ---
+# --- 2. DATABASE CONFIGURATION ---
 try:
     def scrub(key):
         return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
@@ -36,10 +36,8 @@ try:
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
-# MODIFICATION: Unlocking traceback errors to find the real culprit
 except Exception as e:
-    st.error("🚨 System Initialization Interrupted")
-    st.warning("The database connection sequence failed. Review the raw system traceback below to identify the missing parameter or rejection code:")
+    st.error("🚨 System Connection Traceback Error Logged:")
     st.exception(e)
     st.stop()
 
@@ -300,6 +298,10 @@ with st.sidebar:
 # --- 9. SIDEBAR CONTROL CONTROLLERS ---
 working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
 
+# FIXED: Standardize variable scope parameters by initializing safe empty list defaults
+chron_timeline = []
+selected_months = []
+
 if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting"]:
     if working_df.empty:
         st.sidebar.warning("No transactional database content found.")
@@ -336,7 +338,6 @@ if st.session_state['current_page'] == "Dashboard":
         ), use_container_width=True)
         
         st.divider()
-        
         st.subheader("📋 Monthly Breakdown")
         
         if st.session_state['sel_owner'] == "All Owners":
