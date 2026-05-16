@@ -55,7 +55,7 @@ def generate_sts_token():
     return "-".join(blocks)
 
 # --- 5. EXECUTIVE EXECUTIVE PDF REPORT TEMPLATE ---
-def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
+def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo2.png"):
     """Generates an executive-grade landscape PDF report matching corporate visual standards."""
     if not FPDF:
         return None
