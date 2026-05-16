@@ -41,7 +41,7 @@ except Exception as e:
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
-st.set_page_config(page_title="Landlord Executive Portal", page_icon="logo2.png", layout="wide")
+st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo2.png", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -249,7 +249,7 @@ def update_database(f, m):
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
+        if os.path.exists("logo2.png"): st.image("logo2.png", use_container_width=True)
         st.title("🔐 Executive Login")
     u_df = load_users()
     with st.form("login_gate"):
@@ -273,7 +273,7 @@ if not st.session_state['logged_in']:
 raw_df = load_master_data()
 
 with st.sidebar:
-    if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
+    if os.path.exists("logo2.png"): st.image("logo2.png", use_container_width=True)
     st.title(f"👤 {st.session_state['user_name']}")
     
     if st.session_state['user_role'] == 'admin':
@@ -432,7 +432,7 @@ elif st.session_state['current_page'] == "Reporting":
             st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
         with exp_col2:
             if FPDF:
-                pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display, total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
+                pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display, total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo2.png")
                 if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
