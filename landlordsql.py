@@ -41,7 +41,7 @@ except Exception as e:
     st.stop()
 
 # --- 3. APP CONFIG & BRANDING ---
-st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo2.png", layout="wide")
+st.set_page_config(page_title="I-Switch Executive Portal", page_icon="logo.png", layout="wide")
 
 try:
     from fpdf import FPDF
@@ -55,7 +55,7 @@ def generate_sts_token():
     return "-".join(blocks)
 
 # --- 5. EXECUTIVE EXECUTIVE PDF REPORT TEMPLATE ---
-def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo2.png"):
+def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
     """Generates an executive-grade landscape PDF report matching corporate visual standards."""
     if not FPDF:
         return None
@@ -249,7 +249,7 @@ def update_database(f, m):
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        if os.path.exists("logo2.png"): st.image("logo2.png", use_container_width=True)
+        if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
         st.title("🔐 Executive Login")
     u_df = load_users()
     with st.form("login_gate"):
@@ -273,7 +273,7 @@ if not st.session_state['logged_in']:
 raw_df = load_master_data()
 
 with st.sidebar:
-    if os.path.exists("logo2.png"): st.image("logo2.png", use_container_width=True)
+    if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     st.title(f"👤 {st.session_state['user_name']}")
     
     if st.session_state['user_role'] == 'admin':
@@ -322,7 +322,7 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
-        # MODIFICATION: PERFORMANCE TREND MOVED TO TOP & CHANGED TO COLORFUL BAR GRAPH
+        # 1. PERFORMANCE TREND BAR GRAPH (TOP OF THE PAGE)
         st.subheader("📈 Performance Trend")
         trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
         st.plotly_chart(px.bar(
@@ -336,33 +336,55 @@ if st.session_state['current_page'] == "Dashboard":
         
         st.divider()
         
-        # MODIFICATION: MONTHLY BREAKDOWN WITH TRANSACTION COUNTS & GRAND TOTAL ROW
+        # 2. MONTHLY BREAKDOWN WITH DYNAMIC GROUPING BY OWNERSHIP FILTER
         st.subheader("📋 Monthly Breakdown")
         
-        summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({
-            'Sum Of Total Incl Vat': 'sum', 
-            'Units': 'sum', 
-            'Meter Number': 'nunique',
-            'Unique Id': 'count' # Tracks transaction count volume
-        }).rename(columns={
-            'Sum Of Total Incl Vat': 'Sales', 
-            'Units': 'Consumption', 
-            'Meter Number': 'Meters',
-            'Unique Id': 'Transactions'
-        })
-        
-        # Flatten multi-index layout to handle clean programmatic injection
-        summary_flat = summary.reset_index()
-        
-        # Compile bottom Grand Summary totals row
-        total_row = pd.DataFrame([{
-            'Year_Month_Key': 'Grand Total',
-            'Building Detail': '',
-            'Sales': summary_flat['Sales'].sum(),
-            'Consumption': summary_flat['Consumption'].sum(),
-            'Meters': int(fdf['Meter Number'].nunique()),
-            'Transactions': int(summary_flat['Transactions'].sum())
-        }])
+        # FIXED: Check if 'All Owners' is active. If yes, aggregate ONLY by month (1 row per month)
+        if st.session_state['sel_owner'] == "All Owners":
+            summary = fdf.groupby(['Year_Month_Key']).agg({
+                'Sum Of Total Incl Vat': 'sum', 
+                'Units': 'sum', 
+                'Meter Number': 'nunique',
+                'Unique Id': 'count'
+            }).rename(columns={
+                'Sum Of Total Incl Vat': 'Sales', 
+                'Units': 'Consumption', 
+                'Meter Number': 'Meters',
+                'Unique Id': 'Transactions'
+            })
+            summary_flat = summary.reset_index()
+            
+            # Formulate consolidated totals bottom bar
+            total_row = pd.DataFrame([{
+                'Year_Month_Key': 'Grand Total',
+                'Sales': summary_flat['Sales'].sum(),
+                'Consumption': summary_flat['Consumption'].sum(),
+                'Meters': int(fdf['Meter Number'].nunique()),
+                'Transactions': int(summary_flat['Transactions'].sum())
+            }])
+        else:
+            # Individual owner profile is targeted, show detailed tracking splits
+            summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({
+                'Sum Of Total Incl Vat': 'sum', 
+                'Units': 'sum', 
+                'Meter Number': 'nunique',
+                'Unique Id': 'count'
+            }).rename(columns={
+                'Sum Of Total Incl Vat': 'Sales', 
+                'Units': 'Consumption', 
+                'Meter Number': 'Meters',
+                'Unique Id': 'Transactions'
+            })
+            summary_flat = summary.reset_index()
+            
+            total_row = pd.DataFrame([{
+                'Year_Month_Key': 'Grand Total',
+                'Building Detail': '',
+                'Sales': summary_flat['Sales'].sum(),
+                'Consumption': summary_flat['Consumption'].sum(),
+                'Meters': int(fdf['Meter Number'].nunique()),
+                'Transactions': int(summary_flat['Transactions'].sum())
+            }])
         
         summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
         
@@ -432,7 +454,7 @@ elif st.session_state['current_page'] == "Reporting":
             st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
         with exp_col2:
             if FPDF:
-                pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display, total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo2.png")
+                pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display, total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
                 if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
