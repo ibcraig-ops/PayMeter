@@ -199,7 +199,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
             
         pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
-        pdf.cell(col_w[idx] if 'idx' in locals() else col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -376,7 +376,6 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
-        # FEATURE FIXED: Added top-level summary metrics cards reflecting the selected timeline window
         dash_kpi1, dash_kpi2 = st.columns(2)
         with dash_kpi1:
             st.metric("Selected Period Gross Sales", f"R {fdf['Sum Of Total Incl Vat'].sum():,.2f}")
@@ -498,101 +497,153 @@ elif st.session_state['current_page'] == "Reporting":
     if working_df.empty:
         st.info("Please sync asset profiles to access report generation frameworks.")
     else:
-        st.markdown("### 📊 Financial Revenue & Sales Report Factory")
+        # FEATURE FIXED: Wrapped Reporting Suite inside professional Multi-Tab layout
+        t1, t2 = st.tabs(["📊 Financial Sales Factory", "⚠️ Dormant Meters Audit"])
         
-        st.write("#### 🔍 Filter Reporting Window & Structure")
-        rc1, rc2 = st.columns(2)
-        
-        with rc1:
-            local_months_selected = st.multiselect(
-                "Filter Active Report Months:", 
-                chron_timeline, 
-                default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline
-            )
-        with rc2:
-            consolidation_mode = st.selectbox(
-                "Meter Rows Grouping Structure:",
-                ["Consolidate Total for Selected Period", "Split by Month Rows"]
-            )
+        with t1:
+            st.markdown("### 📊 Financial Revenue & Sales Report Factory")
+            st.write("#### 🔍 Filter Reporting Window & Structure")
+            rc1, rc2 = st.columns(2)
             
-        rpt_fdf = working_df[(working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())) & (working_df['Display_Month'].isin(local_months_selected))]
-        
-        if rpt_fdf.empty:
-            st.warning("No data rows locate within current date/building selector configurations.")
-        else:
-            group_cols = []
-            rename_dict = {}
-            
-            if consolidation_mode == "Split by Month Rows":
-                group_cols.extend(['Display_Month', 'Year_Month_Key'])
-                rename_dict['Display_Month'] = 'Period'
+            with rc1:
+                local_months_selected = st.multiselect(
+                    "Filter Active Report Months:", 
+                    chron_timeline, 
+                    default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline
+                )
+            with rc2:
+                consolidation_mode = st.selectbox(
+                    "Meter Rows Grouping Structure:",
+                    ["Consolidate Total for Selected Period", "Split by Month Rows"]
+                )
                 
-            group_cols.append('Building Detail')
-            rename_dict['Building Detail'] = 'Building Location'
+            rpt_fdf = working_df[(working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())) & (working_df['Display_Month'].isin(local_months_selected))]
             
-            if st.session_state['sel_owner'] != "All Owners":
-                group_cols.append('Meter Number')
-                rename_dict['Meter Number'] = 'Meter Number'
-                
-            group_cols.append('Service Resource')
-            rename_dict['Service Resource'] = 'Utility Type'
-            
-            rename_dict.update({
-                'Sum Of Total Incl Vat': 'Gross Sales',
-                'Payment To Principle': 'Net To Principle',
-                'Total Service Fee Incl Vat': 'Service Fees',
-                'Vat': 'VAT',
-                'Units': 'Units Consumed',
-                'Unique Id': 'Transactions'
-            })
-            
-            rpt_grouped = rpt_fdf.groupby(group_cols).agg({
-                'Sum Of Total Incl Vat': 'sum', 
-                'Payment To Principle': 'sum', 
-                'Total Service Fee Incl Vat': 'sum', 
-                'Vat': 'sum', 
-                'Units': 'sum', 
-                'Unique Id': 'count'
-            }).reset_index()
-            
-            if "Year_Month_Key" in rpt_grouped.columns:
-                rpt_grouped = rpt_grouped.sort_values(['Year_Month_Key', 'Building Detail'])
+            if rpt_fdf.empty:
+                st.warning("No data rows locate within current date/building selector configurations.")
             else:
-                rpt_grouped = rpt_grouped.sort_values(['Building Detail'])
+                group_cols = []
+                rename_dict = {}
                 
-            rpt_display = rpt_grouped.rename(columns=rename_dict)
-            totals = {'gross': rpt_display['Gross Sales'].sum(), 'net': rpt_display['Net To Principle'].sum(), 'fees': rpt_display['Service Fees'].sum(), 'vat': rpt_display['VAT'].sum(), 'units': rpt_display['Units Consumed'].sum(), 'tx_count': rpt_display['Transactions'].sum()}
+                if consolidation_mode == "Split by Month Rows":
+                    group_cols.extend(['Display_Month', 'Year_Month_Key'])
+                    rename_dict['Display_Month'] = 'Period'
+                    
+                group_cols.append('Building Detail')
+                rename_dict['Building Detail'] = 'Building Location'
+                
+                if st.session_state['sel_owner'] != "All Owners":
+                    group_cols.append('Meter Number')
+                    rename_dict['Meter Number'] = 'Meter Number'
+                    
+                group_cols.append('Service Resource')
+                rename_dict['Service Resource'] = 'Utility Type'
+                
+                rename_dict.update({
+                    'Sum Of Total Incl Vat': 'Gross Sales',
+                    'Payment To Principle': 'Net To Principle',
+                    'Total Service Fee Incl Vat': 'Service Fees',
+                    'Vat': 'VAT',
+                    'Units': 'Units Consumed',
+                    'Unique Id': 'Transactions'
+                })
+                
+                rpt_grouped = rpt_fdf.groupby(group_cols).agg({
+                    'Sum Of Total Incl Vat': 'sum', 
+                    'Payment To Principle': 'sum', 
+                    'Total Service Fee Incl Vat': 'sum', 
+                    'Vat': 'sum', 
+                    'Units': 'sum', 
+                    'Unique Id': 'count'
+                }).reset_index()
+                
+                if "Year_Month_Key" in rpt_grouped.columns:
+                    rpt_grouped = rpt_grouped.sort_values(['Year_Month_Key', 'Building Detail'])
+                else:
+                    rpt_grouped = rpt_grouped.sort_values(['Building Detail'])
+                    
+                rpt_display = rpt_grouped.rename(columns=rename_dict)
+                totals = {'gross': rpt_display['Gross Sales'].sum(), 'net': rpt_display['Net To Principle'].sum(), 'fees': rpt_display['Service Fees'].sum(), 'vat': rpt_display['VAT'].sum(), 'units': rpt_display['Units Consumed'].sum(), 'tx_count': rpt_display['Transactions'].sum()}
+                
+                st.divider()
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Gross Revenue", f"R {totals['gross']:,.2f}")
+                m2.metric("Principle Payout Share", f"R {totals['net']:,.2f}")
+                m3.metric("Service Fees Retained", f"R {totals['fees']:,.2f}")
+                m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
+                
+                st.write("#### 📑 Sales Report Data Grid Preview")
+                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({
+                    'Gross Sales': 'R {:,.2f}', 
+                    'Net To Principle': 'R {:,.2f}', 
+                    'Service Fees': 'R {:,.2f}', 
+                    'VAT': 'R {:,.2f}', 
+                    'Units Consumed': '{:,.2f}'
+                }), use_container_width=True)
+                
+                st.markdown("#### 📥 Document Compilation & Export Options")
+                exp_col1, exp_col2 = st.columns(2)
+                
+                window_label = f"Selected Range ({len(local_months_selected)} Months)" if len(local_months_selected) < len(chron_timeline) else "Full Historical Portfolio Range"
+                
+                with exp_col1:
+                    xl_buffer = io.BytesIO()
+                    with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: 
+                        rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
+                    st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
+                with exp_col2:
+                    if FPDF:
+                        pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display.drop(columns=['Year_Month_Key'], errors='ignore'), total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
+                        if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
+                        
+        with t2:
+            st.markdown("### ⚠️ Dormant Meters Audit Suite")
+            st.write("Identify operational meters that have registered absolute zero sales transactions across your historical ledger data files.")
             
-            st.divider()
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Gross Revenue", f"R {totals['gross']:,.2f}")
-            m2.metric("Principle Payout Share", f"R {totals['net']:,.2f}")
-            m3.metric("Service Fees Retained", f"R {totals['fees']:,.2f}")
-            m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
+            # Formulate the Dormancy baseline array by looking past the month selectors
+            dorm_base = working_df[working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())]
             
-            st.write("#### 📑 Sales Report Data Grid Preview")
-            st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({
-                'Gross Sales': 'R {:,.2f}', 
-                'Net To Principle': 'R {:,.2f}', 
-                'Service Fees': 'R {:,.2f}', 
-                'VAT': 'R {:,.2f}', 
-                'Units Consumed': '{:,.2f}'
-            }), use_container_width=True)
-            
-            st.markdown("#### 📥 Document Compilation & Export Options")
-            exp_col1, exp_col2 = st.columns(2)
-            
-            window_label = f"Selected Range ({len(local_months_selected)} Months)" if len(local_months_selected) < len(chron_timeline) else "Full Historical Portfolio Range"
-            
-            with exp_col1:
-                xl_buffer = io.BytesIO()
-                with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: 
-                    rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
-                st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
-            with exp_col2:
-                if FPDF:
-                    pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display.drop(columns=['Year_Month_Key'], errors='ignore'), total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
-                    if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
+            if dorm_base.empty:
+                st.warning("No tracking records exist mapping back to this building context sequence.")
+            else:
+                lookback_days = st.slider("Define Dormancy Threshold (Days of Continuous Inactivity):", min_value=15, max_value=120, value=60, step=5)
+                
+                # Use absolute maximum entry as system anchor
+                global_max_date = dorm_base['Trans_date'].max()
+                st.info(f"💡 Target lookback reference calculation locked to newest available transaction timestamp: **{global_max_date.strftime('%Y-%m-%d')}**")
+                
+                # Aggregate to locate maximum transaction date per single meter
+                dorm_grouped = dorm_base.groupby('Meter Number').agg({
+                    'Trans_date': 'max',
+                    'Building Detail': 'first',
+                    'Client': 'first',
+                    'Customer Surname': 'first'
+                }).reset_index()
+                
+                dorm_grouped['Days Inactive'] = (global_max_date - dorm_grouped['Trans_date']).dt.days
+                dormant_filtered = dorm_grouped[dorm_grouped['Days Inactive'] >= lookback_days].sort_values('Days Inactive', ascending=False)
+                
+                dormant_display = dormant_filtered.rename(columns={
+                    'Meter Number': 'Meter Identifier',
+                    'Trans_date': 'Last Successful Purchase',
+                    'Building Detail': 'Asset Location',
+                    'Client': 'Client Vendor Account',
+                    'Customer Surname': 'Tenant Reference',
+                    'Days Inactive': 'Consecutive Inactivity Days'
+                })
+                
+                st.write(f"#### 📋 Dormancy Directory Summary ({len(dormant_display)} Meters Flagged)")
+                if dormant_display.empty:
+                    st.success(f"🎉 Complete structural activity verified! Zero meters exceed the {lookback_days}-day lookup constraints.")
+                else:
+                    st.dataframe(dormant_display.style.format({
+                        'Last Successful Purchase': lambda x: x.strftime('%Y-%m-%d %H:%M') if not pd.isna(x) else ''
+                    }), use_container_width=True)
+                    
+                    xl_buf_dorm = io.BytesIO()
+                    with pd.ExcelWriter(xl_buf_dorm, engine='openpyxl') as xl_wr_dorm:
+                        dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
+                    st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
