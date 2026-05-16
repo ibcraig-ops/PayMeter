@@ -270,6 +270,14 @@ def update_user_password(u, p):
         conn.commit()
     return True
 
+# FEATURE: Purge function added to safely remove targeted landlord access accounts
+def delete_user(u):
+    query = text("DELETE FROM users WHERE username = :u")
+    with engine.connect() as conn:
+        conn.execute(query, {"u": u})
+        conn.commit()
+    return True
+
 @st.cache_data(ttl=60)
 def load_master_data():
     try:
@@ -497,7 +505,6 @@ elif st.session_state['current_page'] == "Reporting":
     if working_df.empty:
         st.info("Please sync asset profiles to access report generation frameworks.")
     else:
-        # FEATURE FIXED: Wrapped Reporting Suite inside professional Multi-Tab layout
         t1, t2 = st.tabs(["📊 Financial Sales Factory", "⚠️ Dormant Meters Audit"])
         
         with t1:
@@ -600,19 +607,15 @@ elif st.session_state['current_page'] == "Reporting":
             st.markdown("### ⚠️ Dormant Meters Audit Suite")
             st.write("Identify operational meters that have registered absolute zero sales transactions across your historical ledger data files.")
             
-            # Formulate the Dormancy baseline array by looking past the month selectors
             dorm_base = working_df[working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())]
             
             if dorm_base.empty:
                 st.warning("No tracking records exist mapping back to this building context sequence.")
             else:
                 lookback_days = st.slider("Define Dormancy Threshold (Days of Continuous Inactivity):", min_value=15, max_value=120, value=60, step=5)
-                
-                # Use absolute maximum entry as system anchor
                 global_max_date = dorm_base['Trans_date'].max()
                 st.info(f"💡 Target lookback reference calculation locked to newest available transaction timestamp: **{global_max_date.strftime('%Y-%m-%d')}**")
                 
-                # Aggregate to locate maximum transaction date per single meter
                 dorm_grouped = dorm_base.groupby('Meter Number').agg({
                     'Trans_date': 'max',
                     'Building Detail': 'first',
@@ -645,10 +648,13 @@ elif st.session_state['current_page'] == "Reporting":
                         dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
+# --- 12. USER ADMINISTRATION ---
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
-    t1, t2 = st.tabs(["Add Landlord", "Reset Password"])
+    
+    # FEATURE FIXED: Added third "Delete User" tab to handle administrative user purge operations
+    t1, t2, t3 = st.tabs(["Add Landlord", "Reset Password", "Delete User"])
     with t1:
         with st.form("create_landlord"):
             nu, np = st.text_input("New Username"), st.text_input("Password", type="password")
@@ -658,6 +664,18 @@ elif st.session_state['current_page'] == "UserAdmin":
         ur = st.selectbox("Select Account", u_df['username'].tolist())
         npw = st.text_input("New Password", type="password")
         if st.button("Update Access"): update_user_password(ur, npw); st.success("Access Updated.")
+    with t3:
+        # Prevent the logged-in administrator from deleting their own root profile
+        delete_opts = [un for un in u_df['username'].tolist() if un != "admin"]
+        if not delete_opts:
+            st.info("No landlord tracking sub-accounts currently available to purge.")
+        else:
+            ud = st.selectbox("Select Account to Delete", delete_opts)
+            st.warning(f"⚠️ Action Required: Deleting account '{ud}' will permanently revoke their portal database privileges.")
+            if st.button("❌ Permanently Purge Account Access", use_container_width=True):
+                delete_user(ud)
+                st.success(f"Security Profile for account '{ud}' has been purges successfully.")
+                st.rerun()
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Reference & Command Center")
