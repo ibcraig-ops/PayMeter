@@ -465,14 +465,12 @@ def clear_transaction_history():
         st.cache_data.clear()
         return True
 
-# FIXED ENGINE CORRECTION LAYER: Automatically scrub trailing decimals from meter numbers on retrieval
 @st.cache_data(ttl=60)
 def load_master_data():
     try:
         df = pd.read_sql("SELECT * FROM transactions", engine)
         if df.empty: return df
         
-        # Scrub trailing float decimals from meter column fields globally prior to workspace assembly
         if 'Meter Number' in df.columns:
             df['Meter Number'] = df['Meter Number'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
             
@@ -695,10 +693,11 @@ if st.session_state['current_page'] == "Dashboard":
             summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
             st.dataframe(summary_with_total.style.format({'Sales': 'R {:,.2f}', 'Consumption': '{:,.2f}', 'Meters': '{:,}', 'Transactions': '{:,}'}), use_container_width=True)
             
+            # FIXED EXTRACTION LIFECYCLES: Removed with ExcelWriter context blocks globally across entire file
             c1, c2 = st.columns(2)
             with c1:
                 xl = io.BytesIO()
-                with pd.ExcelWriter(xl) as wr: summary_with_total.to_excel(wr, index=False)
+                summary_with_total.to_excel(xl, index=False)
                 st.download_button("📥 Excel Export", xl.getvalue(), "Statement.xlsx")
             with c2:
                 if FPDF:
@@ -777,9 +776,10 @@ elif st.session_state['current_page'] == "Reporting":
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 exp_col1, exp_col2 = st.columns(2)
                 window_label = f"Selected Range ({len(local_months_selected)} Months)" if len(local_months_selected) < len(chron_timeline) else "Full Historical Portfolio Range"
+                # FIXED EXTRACTION LIFECYCLES: Removed ExcelWriter context manager block logic for direct generation
                 with exp_col1:
                     xl_buffer = io.BytesIO()
-                    with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
+                    rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_buffer, index=False, sheet_name="Sales Summary Report")
                     st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
                 with exp_col2:
                     if FPDF:
@@ -826,9 +826,10 @@ elif st.session_state['current_page'] == "Reporting":
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 b_exp_col1, b_exp_col2 = st.columns(2)
                 window_label_b = f"Selected Range ({len(local_months_b)} Months)" if len(local_months_b) < len(chron_timeline) else "Full Historical Portfolio Range"
+                # FIXED EXTRACTION LIFECYCLES: Removed ExcelWriter context manager block logic for direct generation
                 with b_exp_col1:
                     xl_buffer_b = io.BytesIO()
-                    with pd.ExcelWriter(xl_buffer_b, engine='openpyxl') as xl_writer_b: b_display_df.to_excel(xl_buffer_b, index=False, sheet_name="Building Summary Statement")
+                    b_display_df.to_excel(xl_buffer_b, index=False, sheet_name="Building Summary")
                     st.download_button(label="📥 Export Building Statement as Excel Ledger", data=xl_buffer_b.getvalue(), file_name=f"Building_Summary_Statement_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
                 with b_exp_col2:
                     if FPDF:
@@ -853,8 +854,9 @@ elif st.session_state['current_page'] == "Reporting":
                 if dormant_display.empty: st.success(f"🎉 Complete structural activity verified! Zero meters exceed the {lookback_days}-day lookup constraints.")
                 else:
                     st.dataframe(dormant_display.style.format({'Last Successful Purchase': lambda x: x.strftime('%Y-%m-%d %H:%M') if not pd.isna(x) else ''}), use_container_width=True)
+                    # FIXED EXTRACTION LIFECYCLES: Removed ExcelWriter context manager block logic for direct generation
                     xl_buf_dorm = io.BytesIO()
-                    with pd.ExcelWriter(xl_buf_dorm, engine='openpyxl') as xl_wr_dorm: dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
+                    dormant_display.to_excel(xl_buf_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
