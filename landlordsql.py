@@ -447,7 +447,19 @@ def purge_all_notifications():
         st.exception(database_error)
         return False
 
-# FIXED VULNERABILITY: Fill gaps with placeholders so data is never dropped from calculations
+# FEATURE: Dedicated function to completely drop the table and flush caches
+def clear_transaction_history():
+    try:
+        query = text("DROP TABLE IF EXISTS transactions")
+        with engine.begin() as conn:
+            conn.execute(query)
+        st.cache_data.clear()
+        return True
+    except Exception as drop_error:
+        st.error("🚨 Failed to wipe database contents.")
+        st.exception(drop_error)
+        return False
+
 @st.cache_data(ttl=60)
 def load_master_data():
     try:
@@ -471,12 +483,10 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
-# FIXED ENGINE: Automated formatting translations and non-destructive ID cleaning
 def update_database(f, m):
     try:
         df = pd.read_csv(f)
         
-        # Norm translation schema to adapt variations seamlessly
         col_map = {
             "unique id": "Unique Id", "unique_id": "Unique Id",
             "trans_date": "Trans_date", "trans date": "Trans_date", "transaction date": "Trans_date",
@@ -490,7 +500,6 @@ def update_database(f, m):
             "vat": "Vat", "units": "Units", "client": "Client", "customer surname": "Customer Surname"
         }
         
-        # Standardize strings to matching map indices
         df.columns = df.columns.str.strip().str.lower()
         df = df.rename(columns=col_map)
         
@@ -500,7 +509,6 @@ def update_database(f, m):
                 with engine.connect() as read_conn:
                     existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', read_conn)
                 if 'Unique Id' in existing_records.columns:
-                    # Trailing decimal safety handler that isolates string components safely
                     blacklist_ids = {str(x).strip()[:-2] if str(x).strip().endswith('.0') else str(x).strip() for x in existing_records['Unique Id'].dropna().tolist()}
             except Exception:
                 pass
@@ -553,6 +561,7 @@ if not st.session_state['logged_in']:
 raw_df = load_master_data()
 
 with st.sidebar:
+    st.success("✔️ Connected to Database")
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     st.title(f"👤 {st.session_state['user_name']}")
     
@@ -561,6 +570,14 @@ with st.sidebar:
             up = st.file_uploader("Upload CSV", type="csv")
             md = "replace" if st.radio("Mode", ["Overwrite", "Append"]) == "Overwrite" else "append"
             if up and st.button("Sync Now"): update_database(up, md); st.rerun()
+            
+            # FEATURE WORKFLOW TARGET: SECURE Danger Zone section containing immediate table truncate buttons
+            st.divider()
+            st.markdown("<span style='color:#ef4444; font-weight:700; font-size:12px;'>⚠️ DANGER ZONE</span>", unsafe_allow_html=True)
+            if st.button("🗑️ Wipe All Transaction Logs", use_container_width=True):
+                if clear_transaction_history():
+                    st.toast("Database tables successfully wiped clean!", icon="🧼")
+                    st.rerun()
             
     st.divider()
     st.button("📊 Dashboard", on_click=lambda: st.session_state.update({'current_page': 'Dashboard'}), use_container_width=True)
