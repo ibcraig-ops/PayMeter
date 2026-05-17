@@ -447,7 +447,7 @@ def purge_all_notifications():
         st.exception(database_error)
         return False
 
-# FIXED LAYOUT VULNERABILITY: Prevent silent row drops on unparsed formats or null spaces
+# FIXED VULNERABILITY: Fill gaps with placeholders so data is never dropped from calculations
 @st.cache_data(ttl=60)
 def load_master_data():
     try:
@@ -459,7 +459,6 @@ def load_master_data():
         df['Total Service Fee Incl Vat'] = pd.to_numeric(df['Total Service Fee Incl Vat'], errors='coerce').fillna(0)
         df['Vat'] = pd.to_numeric(df['Vat'], errors='coerce').fillna(0)
         
-        # Parse cleanly while preserving rows with format fallbacks
         df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
         
         df['Owner Detail'] = df['Owner Detail'].fillna("Missing Owner").astype(str).str.strip()
@@ -472,11 +471,28 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
-# FIXED SECURITY CORRECTION: Normalize validation maps to string objects to bypass floating-point type comparison gaps
+# FIXED ENGINE: Automated formatting translations and non-destructive ID cleaning
 def update_database(f, m):
     try:
         df = pd.read_csv(f)
-        df.columns = df.columns.str.strip()
+        
+        # Norm translation schema to adapt variations seamlessly
+        col_map = {
+            "unique id": "Unique Id", "unique_id": "Unique Id",
+            "trans_date": "Trans_date", "trans date": "Trans_date", "transaction date": "Trans_date",
+            "owner detail": "Owner Detail", "owner": "Owner Detail",
+            "building detail": "Building Detail", "building location": "Building Detail", "building": "Building Detail",
+            "meter number": "Meter Number", "meter no": "Meter Number",
+            "service resource": "Service Resource", "utility type": "Service Resource", "utility": "Service Resource",
+            "sum of total incl vat": "Sum Of Total Incl Vat", "gross sales": "Sum Of Total Incl Vat", "gross": "Sum Of Total Incl Vat",
+            "payment to principle": "Payment To Principle", "net to principle": "Payment To Principle",
+            "total service fee incl vat": "Total Service Fee Incl Vat", "service fees": "Total Service Fee Incl Vat",
+            "vat": "Vat", "units": "Units", "client": "Client", "customer surname": "Customer Surname"
+        }
+        
+        # Standardize strings to matching map indices
+        df.columns = df.columns.str.strip().str.lower()
+        df = df.rename(columns=col_map)
         
         if m == "append":
             blacklist_ids = set()
@@ -484,20 +500,25 @@ def update_database(f, m):
                 with engine.connect() as read_conn:
                     existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', read_conn)
                 if 'Unique Id' in existing_records.columns:
-                    blacklist_ids = {str(x).strip().split('.')[0] for x in existing_records['Unique Id'].dropna().tolist()}
+                    # Trailing decimal safety handler that isolates string components safely
+                    blacklist_ids = {str(x).strip()[:-2] if str(x).strip().endswith('.0') else str(x).strip() for x in existing_records['Unique Id'].dropna().tolist()}
             except Exception:
                 pass
 
             if 'Unique Id' in df.columns and blacklist_ids:
-                df_clean_ids = df['Unique Id'].astype(str).str.strip().str.split('.').str[0]
+                raw_total = len(df)
+                df_clean_ids = df['Unique Id'].astype(str).str.strip().apply(lambda s: s[:-2] if s.endswith('.0') else s)
                 df = df[~df_clean_ids.isin(blacklist_ids)]
+                dropped_duplicates = raw_total - len(df)
+                if dropped_duplicates > 0:
+                    st.sidebar.info(f"ℹ️ Filtered out {dropped_duplicates} duplicate records from file.")
 
         if not df.empty:
             with engine.begin() as conn:
                 df.to_sql("transactions", conn, if_exists=m, index=False)
-            st.toast(f"✔️ Database Sync Complete. Processed {len(df)} unique record insertions.", icon="🚀")
+            st.sidebar.success(f"🚀 Ingested {len(df)} new records successfully!")
         else:
-            st.toast("ℹ️ Duplicate Upload Blocked. All entries within target ledger already exist in database.", icon="ℹ️")
+            st.sidebar.warning("⚠️ Processing Aborted: Every row inside file is already tracked inside history logs.")
             
         st.cache_data.clear()
     except Exception as data_sync_exception:
@@ -532,7 +553,6 @@ if not st.session_state['logged_in']:
 raw_df = load_master_data()
 
 with st.sidebar:
-    st.success("✔️ Connected to Database")
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     st.title(f"👤 {st.session_state['user_name']}")
     
