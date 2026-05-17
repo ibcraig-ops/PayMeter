@@ -209,7 +209,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
             
         pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
-        pdf.cell(col_w[idx] if 'idx' in locals() else col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -492,17 +492,31 @@ if st.session_state['current_page'] == "Dashboard":
             
         st.divider()
         
-        # 1. PERFORMANCE TREND BAR GRAPH
+        # FIXED FEATURES: Performance graph updated to track Electricity vs Water distinctly side-by-side
         st.subheader("📈 Performance Trend")
-        trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
-        st.plotly_chart(px.bar(
-            trend_data, 
-            x='Year_Month_Key', 
-            y='Sum Of Total Incl Vat', 
-            color='Year_Month_Key', 
-            title="Gross Revenue Breakdown per Month",
-            labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period'}
-        ), use_container_width=True)
+        if 'Service Resource' in fdf.columns:
+            trend_data = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Sum Of Total Incl Vat'].sum().reset_index()
+            fig = px.bar(
+                trend_data, 
+                x='Year_Month_Key', 
+                y='Sum Of Total Incl Vat', 
+                color='Service Resource', 
+                barmode='group',
+                title="Gross Revenue Split: Electricity vs Water",
+                labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period', 'Service Resource': 'Utility Resource'},
+                color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'} # Matches dashboard table theme color coding perfectly
+            )
+        else:
+            trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
+            fig = px.bar(
+                trend_data, 
+                x='Year_Month_Key', 
+                y='Sum Of Total Incl Vat', 
+                color='Year_Month_Key', 
+                title="Gross Revenue Breakdown per Month",
+                labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period'}
+            )
+        st.plotly_chart(fig, use_container_width=True)
         
         st.divider()
         st.subheader("📋 Monthly Breakdown")
@@ -747,12 +761,10 @@ elif st.session_state['current_page'] == "Reporting":
                         dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
-# --- 12. USER ADMINISTRATION ---
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
-    # --- FIXED FEATURE WORKFLOW: Master active directory rendering layer pushed to top of view frame ---
     st.markdown("### 📋 Active System Access Accounts")
     display_users = u_df[['username', 'role', 'owner_name']].rename(columns={
         'username': 'System Username Identifier',
