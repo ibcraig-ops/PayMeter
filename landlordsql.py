@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -357,10 +356,11 @@ def gen_building_summary_pdf(summary_df, total_metrics, period_label, portfolio_
     return bytes(pdf.output())
 
 # --- 6. DATABASE FUNCTIONS ---
+# PERFORMANCE OPTIMIZATION: Added short-lived query caching to stop database hits on every single mouse click
+@st.cache_data(ttl=300)
 def load_users():
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
-        st.sidebar.success(f"✔️ Connected to Database")
         return df
     except Exception as e:
         err_str = str(e).lower()
@@ -369,14 +369,13 @@ def load_users():
             df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
             try:
                 df_init.to_sql("users", engine, if_exists="replace", index=False)
-                st.sidebar.success(f"✔️ System Tables Initialized")
                 return df_init
             except Exception as sql_e:
                 st.error("🚨 System Table Initialization Failed")
                 st.code(str(sql_e))
                 st.stop()
         else:
-            st.sidebar.error("❌ App Connection Failed")
+            st.error("❌ App Connection Failed")
             st.stop()
 
 def save_user(u, p, r, o):
@@ -385,6 +384,7 @@ def save_user(u, p, r, o):
         query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
         with engine.begin() as conn:
             conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
+        st.cache_data.clear() # Force immediate cache eviction to display updates
         return True
     except Exception as database_error:
         st.error("🚨 Database Engine Rejected User Creation Entry")
@@ -397,6 +397,7 @@ def update_user_password(u, p):
         query = text("UPDATE users SET password = :p WHERE username = :u")
         with engine.begin() as conn:
             conn.execute(query, {"p": hp, "u": u})
+        st.cache_data.clear()
         return True
     except Exception as database_error:
         st.error("🚨 Database Engine Rejected Password Revision Request")
@@ -408,6 +409,7 @@ def delete_user(u):
         query = text("DELETE FROM users WHERE username = :u")
         with engine.begin() as conn:
             conn.execute(query, {"u": u})
+        st.cache_data.clear()
         return True
     except Exception as database_error:
         st.error("🚨 Database Engine Rejected Access Revocation Purge")
@@ -465,22 +467,17 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
-# --- RE-ENGINEERED SYNC ENGINE: Performs inline in-memory anti-duplicate scanning via Unique Id mapping sets ---
 def update_database(f, m):
     df = pd.read_csv(f)
     df.columns = df.columns.str.strip()
     
     if m == "append":
         try:
-            # Load only the column we need to perform verification, protecting memory overhead
             existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', engine)
             blacklist_ids = set(existing_records['Unique Id'].dropna().tolist())
-            
-            # Drops rows whose specific Unique Identifier key already matches current storage blocks
             if 'Unique Id' in df.columns:
                 df = df[~df['Unique Id'].isin(blacklist_ids)]
         except Exception:
-            # If the database table is completely missing or empty, ignore filters and proceed
             pass
 
     if not df.empty:
@@ -519,6 +516,7 @@ if not st.session_state['logged_in']:
 raw_df = load_master_data()
 
 with st.sidebar:
+    st.success("✔️ Connected to Database")
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     st.title(f"👤 {st.session_state['user_name']}")
     
@@ -548,10 +546,7 @@ chron_timeline = []
 selected_months = []
 
 if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting"]:
-    if working_df.empty:
-        st.sidebar.warning("No transactional database content found.")
-        fdf = working_df
-    else:
+    if not working_df.empty:
         with st.sidebar:
             st.markdown("### 🔍 Live Dataset Filters")
             sb = st.multiselect("Filter Asset Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
@@ -559,12 +554,11 @@ if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting"]:
             selected_months = st.multiselect("Filter Months/Years", chron_timeline, default=chron_timeline)
             st.divider()
             if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
-        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
 else:
     with st.sidebar:
         if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
 
-# --- 10. PREMIUM TOP-OF-PAGE NOTIFICATION LAYER ---
+# --- 10. NOTIFICATION LAYER ---
 if st.session_state['logged_in']:
     target_scope = st.session_state['assigned_owner'] if st.session_state['user_role'] == 'landlord' else 'All'
     active_alerts = load_active_notifications(target_scope)
@@ -577,248 +571,144 @@ if st.session_state['logged_in']:
         </div>
         """, unsafe_allow_html=True)
 
-# --- 11. VIEWPORT PAGES CONTROLLER ROUTER ---
+# --- 11. PAGES TRACKING VIEW PORTS ---
 
 if st.session_state['current_page'] == "Dashboard":
-    if fdf.empty: st.warning("No data matches selected timeline or building parameters.")
+    if working_df.empty: st.warning("No transactional database content found.")
     else:
-        st.title(f"🏢 {st.session_state['sel_owner']} Overview")
-        
-        elec_sub = fdf[fdf['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in fdf.columns else pd.DataFrame()
-        water_sub = fdf[fdf['Service Resource'].str.lower() == 'water'] if 'Service Resource' in fdf.columns else pd.DataFrame()
-        
-        e_sales = elec_sub['Sum Of Total Incl Vat'].sum()
-        e_units = elec_sub['Units'].sum()
-        w_sales = water_sub['Sum Of Total Incl Vat'].sum()
-        w_units = water_sub['Units'].sum()
-        
-        t_sales = e_sales + w_sales
-        t_units = e_units + w_units
-        
-        st.write("#### 📊 Period Performance Summary Matrix")
-        
-        html_matrix = f"""
-        <table style="width:100%; border-collapse: collapse; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px;">
-            <thead>
-                <tr style="background-color: #1e3a8a; color: white; text-align: left;">
-                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">Metric Summary Matrix</th>
-                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">⚡ Electricity</th>
-                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">💧 Water</th>
-                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">🏢 Total Scope</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0;">
-                    <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px; width: 20%;">💰 Sales</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {e_sales:,.2f}</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {w_sales:,.2f}</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0f172a; background-color: #f1f5f9; width: 28%;">R {t_sales:,.2f}</td>
-                </tr>
-                <tr style="background-color: #ffffff;">
-                    <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px;">📊 Consumption</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{e_units:,.2f} Units</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{w_units:,.2f} Units</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #475569; background-color: #f1f5f9;">{t_units:,.2f} Units</td>
-                </tr>
-            </tbody>
-        </table>
-        """
-        st.markdown(html_matrix, unsafe_allow_html=True)
-            
-        st.divider()
-        
-        # 1. PERFORMANCE TREND BAR GRAPH
-        st.subheader("📈 Performance Trend")
-        if 'Service Resource' in fdf.columns:
-            trend_data = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Sum Of Total Incl Vat'].sum().reset_index()
-            fig = px.bar(
-                trend_data, 
-                x='Year_Month_Key', 
-                y='Sum Of Total Incl Vat', 
-                color='Service Resource', 
-                barmode='group',
-                title="Gross Revenue Split: Electricity vs Water",
-                labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period', 'Service Resource': 'Utility Resource'},
-                color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'}
-            )
+        # PERFORMANCE OPTIMIZATION: Heavy dataframe filtering calculations executed ONLY inside the dashboard layout viewport
+        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
+        if fdf.empty: st.warning("No data matches selected timeline parameters.")
         else:
-            trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
-            fig = px.bar(
-                trend_data, 
-                x='Year_Month_Key', 
-                y='Sum Of Total Incl Vat', 
-                color='Year_Month_Key', 
-                title="Gross Revenue Breakdown per Month",
-                labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period'}
-            )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.divider()
-        st.subheader("📋 Monthly Breakdown")
-        
-        if st.session_state['sel_owner'] == "All Owners":
-            summary = fdf.groupby(['Year_Month_Key']).agg({
-                'Sum Of Total Incl Vat': 'sum', 
-                'Units': 'sum', 
-                'Meter Number': 'nunique',
-                'Unique Id': 'count'
-            }).rename(columns={
-                'Sum Of Total Incl Vat': 'Sales', 
-                'Units': 'Consumption', 
-                'Meter Number': 'Meters',
-                'Unique Id': 'Transactions'
-            })
-            summary_flat = summary.reset_index()
+            st.title(f"🏢 {st.session_state['sel_owner']} Overview")
             
-            total_row = pd.DataFrame([{
-                'Year_Month_Key': 'Grand Total',
-                'Sales': summary_flat['Sales'].sum(),
-                'Consumption': summary_flat['Consumption'].sum(),
-                'Meters': int(fdf['Meter Number'].nunique()),
-                'Transactions': int(summary_flat['Transactions'].sum())
-            }])
-        else:
-            summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({
-                'Sum Of Total Incl Vat': 'sum', 
-                'Units': 'sum', 
-                'Meter Number': 'nunique',
-                'Unique Id': 'count'
-            }).rename(columns={
-                'Sum Of Total Incl Vat': 'Sales', 
-                'Units': 'Consumption', 
-                'Meter Number': 'Meters',
-                'Unique Id': 'Transactions'
-            })
-            summary_flat = summary.reset_index()
+            elec_sub = fdf[fdf['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in fdf.columns else pd.DataFrame()
+            water_sub = fdf[fdf['Service Resource'].str.lower() == 'water'] if 'Service Resource' in fdf.columns else pd.DataFrame()
             
-            total_row = pd.DataFrame([{
-                'Year_Month_Key': 'Grand Total',
-                'Building Detail': '',
-                'Sales': summary_flat['Sales'].sum(),
-                'Consumption': summary_flat['Consumption'].sum(),
-                'Meters': int(fdf['Meter Number'].nunique()),
-                'Transactions': int(summary_flat['Transactions'].sum())
-            }])
-        
-        summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
-        
-        summary_with_total['Sales'] = pd.to_numeric(summary_with_total['Sales'], errors='coerce').fillna(0)
-        summary_with_total['Consumption'] = pd.to_numeric(summary_with_total['Consumption'], errors='coerce').fillna(0)
-        summary_with_total['Meters'] = pd.to_numeric(summary_with_total['Meters'], errors='coerce').fillna(0).astype(int)
-        summary_with_total['Transactions'] = pd.to_numeric(summary_with_total['Transactions'], errors='coerce').fillna(0).astype(int)
-        
-        st.dataframe(summary_with_total.style.format({
-            'Sales': 'R {:,.2f}', 
-            'Consumption': '{:,.2f}',
-            'Meters': '{:,}',
-            'Transactions': '{:,}'
-        }), use_container_width=True)
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            xl = io.BytesIO()
-            with pd.ExcelWriter(xl) as wr: summary_with_total.to_excel(wr, index=False)
-            st.download_button("📥 Excel Export", xl.getvalue(), "Statement.xlsx")
-        with c2:
-            if FPDF:
-                ex_m = sorted(fdf['Display_Month'].unique())
-                sel_m = st.selectbox("Select Month for PDF Summary", ex_m)
-                if st.button("📥 Generate PDF Breakdown"):
-                    m_data = fdf[fdf['Display_Month'] == sel_m].groupby('Building Detail').agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum'})
-                    st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
+            e_sales, e_units = elec_sub['Sum Of Total Incl Vat'].sum(), elec_sub['Units'].sum()
+            w_sales, w_units = water_sub['Sum Of Total Incl Vat'].sum(), water_sub['Units'].sum()
+            t_sales, t_units = e_sales + w_sales, e_units + w_units
+            
+            st.write("#### 📊 Period Performance Summary Matrix")
+            html_matrix = f"""
+            <table style="width:100%; border-collapse: collapse; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                <thead>
+                    <tr style="background-color: #1e3a8a; color: white; text-align: left;">
+                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">Metric Summary Matrix</th>
+                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">⚡ Electricity</th>
+                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">💧 Water</th>
+                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">🏢 Total Scope</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px; width: 20%;">💰 Sales</td>
+                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {e_sales:,.2f}</td>
+                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {w_sales:,.2f}</td>
+                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0f172a; background-color: #f1f5f9; width: 28%;">R {t_sales:,.2f}</td>
+                    </tr>
+                    <tr style="background-color: #ffffff;">
+                        <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px;">📊 Consumption</td>
+                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{e_units:,.2f} Units</td>
+                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{w_units:,.2f} Units</td>
+                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #475569; background-color: #f1f5f9;">{t_units:,.2f} Units</td>
+                    </tr>
+                </tbody>
+            </table>
+            """
+            st.markdown(html_matrix, unsafe_allow_html=True)
+            st.divider()
+            
+            st.subheader("📈 Performance Trend")
+            if 'Service Resource' in fdf.columns:
+                trend_data = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Sum Of Total Incl Vat'].sum().reset_index()
+                fig = px.bar(trend_data, x='Year_Month_Key', y='Sum Of Total Incl Vat', color='Service Resource', barmode='group', title="Gross Revenue Split: Electricity vs Water", labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period', 'Service Resource': 'Utility Resource'}, color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'})
+            else:
+                trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
+                fig = px.bar(trend_data, x='Year_Month_Key', y='Sum Of Total Incl Vat', title="Gross Revenue Breakdown per Month")
+            st.plotly_chart(fig, use_container_width=True)
+            st.divider()
+            
+            st.subheader("📋 Monthly Breakdown")
+            if st.session_state['sel_owner'] == "All Owners":
+                summary = fdf.groupby(['Year_Month_Key']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique', 'Unique Id': 'count'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters', 'Unique Id': 'Transactions'})
+                summary_flat = summary.reset_index()
+                total_row = pd.DataFrame([{'Year_Month_Key': 'Grand Total', 'Sales': summary_flat['Sales'].sum(), 'Consumption': summary_flat['Consumption'].sum(), 'Meters': int(fdf['Meter Number'].nunique()), 'Transactions': int(summary_flat['Transactions'].sum())}])
+            else:
+                summary = fdf.groupby(['Year_Month_Key', 'Building Detail']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique', 'Unique Id': 'count'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters', 'Unique Id': 'Transactions'})
+                summary_flat = summary.reset_index()
+                total_row = pd.DataFrame([{'Year_Month_Key': 'Grand Total', 'Building Detail': '', 'Sales': summary_flat['Sales'].sum(), 'Consumption': summary_flat['Consumption'].sum(), 'Meters': int(fdf['Meter Number'].nunique()), 'Transactions': int(summary_flat['Transactions'].sum())}])
+            
+            summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
+            st.dataframe(summary_with_total.style.format({'Sales': 'R {:,.2f}', 'Consumption': '{:,.2f}', 'Meters': '{:,}', 'Transactions': '{:,}'}), use_container_width=True)
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                xl = io.BytesIO()
+                with pd.ExcelWriter(xl) as wr: summary_with_total.to_excel(wr, index=False)
+                st.download_button("📥 Excel Export", xl.getvalue(), "Statement.xlsx")
+            with c2:
+                if FPDF:
+                    ex_m = sorted(fdf['Display_Month'].unique())
+                    sel_m = st.selectbox("Select Month for PDF Summary", ex_m)
+                    if st.button("📥 Generate PDF Breakdown"):
+                        m_data = fdf[fdf['Display_Month'] == sel_m].groupby('Building Detail').agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum'})
+                        st.download_button("Download PDF", gen_p(m_data, f"Report: {sel_m}"), "Report.pdf")
 
-        st.divider()
-        st.subheader("🏆 Top 10 Highest Transactions")
-        st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
-        st.divider()
-        st.subheader("🔎 Fast Ledger Text Search")
-        q = st.text_input("Filter dashboard results by keyword...")
-        res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
-        st.dataframe(res, use_container_width=True)
+            st.divider()
+            st.subheader("🏆 Top 10 Highest Transactions")
+            st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
+            st.divider()
+            st.subheader("🔎 Fast Ledger Text Search")
+            q = st.text_input("Filter dashboard results by keyword...")
+            res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
+            st.dataframe(res, use_container_width=True)
 
 elif st.session_state['current_page'] == "Analytics":
-    st.title("📈 Strategic Portfolio Analytics")
-    if fdf.empty: st.warning("Select items from the sidebar filters to build charts.")
+    if working_df.empty: st.warning("No tracking records available to compute visuals.")
     else:
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(fdf, values='Sum Of Total Incl Vat', names='Service Resource', title="Revenue Mix by Utility Type"), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(fdf.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue Contribution per Client Account"), use_container_width=True)
-        st.divider()
-        c3, c4 = st.columns(2)
-        with c3: st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Units'].sum().reset_index(), x='Year_Month_Key', y='Units', markers=True, title="Consumption Volatility Trend (Units)"), use_container_width=True)
-        with c4: st.plotly_chart(px.bar(fdf.groupby('Building Detail')['Sum Of Total Incl Vat'].sum().reset_index().sort_values('Sum Of Total Incl Vat', ascending=False).head(15), y='Building Detail', x='Sum Of Total Incl Vat', orientation='h', title="Top 15 Buildings by Billings Gross"), use_container_width=True)
+        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
+        st.title("📈 Strategic Portfolio Analytics")
+        if fdf.empty: st.warning("Select filters from the sidebar to build dynamic charts.")
+        else:
+            c1, c2 = st.columns(2)
+            with c1: st.plotly_chart(px.pie(fdf, values='Sum Of Total Incl Vat', names='Service Resource', title="Revenue Mix by Utility Type"), use_container_width=True)
+            with c2: st.plotly_chart(px.bar(fdf.groupby('Client')['Sum Of Total Incl Vat'].sum().reset_index(), x='Client', y='Sum Of Total Incl Vat', title="Revenue Contribution per Client Account"), use_container_width=True)
+            st.divider()
+            c3, c4 = st.columns(2)
+            with c3: st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Units'].sum().reset_index(), x='Year_Month_Key', y='Units', markers=True, title="Consumption Volatility Trend (Units)"), use_container_width=True)
+            with c4: st.plotly_chart(px.bar(fdf.groupby('Building Detail')['Sum Of Total Incl Vat'].sum().reset_index().sort_values('Sum Of Total Incl Vat', ascending=False).head(15), y='Building Detail', x='Sum Of Total Incl Vat', orientation='h', title="Top 15 Buildings by Billings Gross"), use_container_width=True)
 
-# --- 11. REPORTING SUITE PAGE ---
 elif st.session_state['current_page'] == "Reporting":
-    st.title("🗂️ Executive Reporting Suite")
-    if working_df.empty:
-        st.info("Please sync asset profiles to access report generation frameworks.")
+    if working_df.empty: st.info("Please sync asset profiles to access report generation frameworks.")
     else:
-        # SYSTEM UPDATE: Expanded tab routing array to natively register building subtotals
+        # PERFORMANCE OPTIMIZATION: Sidebar extraction rules isolated locally inside page
+        sb_local = sb if 'sb' in locals() else working_df['Building Detail'].unique()
+        
         t1, t2, t3 = st.tabs(["📊 Financial Sales Factory", "🏢 Building Summary Report", "⚠️ Dormant Meters Audit"])
         
         with t1:
             st.markdown("### 📊 Financial Revenue & Sales Report Factory")
             st.write("#### 🔍 Filter Reporting Window & Structure")
             rc1, rc2 = st.columns(2)
-            
-            with rc1:
-                local_months_selected = st.multiselect(
-                    "Filter Active Report Months:", 
-                    chron_timeline, 
-                    default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline
-                )
-            with rc2:
-                consolidation_mode = st.selectbox(
-                    "Meter Rows Grouping Structure:",
-                    ["Consolidate Total for Selected Period", "Split by Month Rows"]
-                )
+            with rc1: local_months_selected = st.multiselect("Filter Active Report Months:", chron_timeline, default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline)
+            with rc2: consolidation_mode = st.selectbox("Meter Rows Grouping Structure:", ["Consolidate Total for Selected Period", "Split by Month Rows"])
                 
-            rpt_fdf = working_df[(working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())) & (working_df['Display_Month'].isin(local_months_selected))]
-            
-            if rpt_fdf.empty:
-                st.warning("No data rows locate within current date/building selector configurations.")
+            rpt_fdf = working_df[(working_df['Building Detail'].isin(sb_local)) & (working_df['Display_Month'].isin(local_months_selected))]
+            if rpt_fdf.empty: st.warning("No data rows locate within current selections.")
             else:
                 group_cols = []
                 rename_dict = {}
-                
                 if consolidation_mode == "Split by Month Rows":
                     group_cols.extend(['Display_Month', 'Year_Month_Key'])
                     rename_dict['Display_Month'] = 'Period'
-                    
-                group_cols.append('Building Detail')
-                rename_dict['Building Detail'] = 'Building Location'
+                group_cols.append('Building Detail'); rename_dict['Building Detail'] = 'Building Location'
+                if st.session_state['sel_owner'] != "All Owners": group_cols.append('Meter Number'); rename_dict['Meter Number'] = 'Meter Number'
+                group_cols.append('Service Resource'); rename_dict['Service Resource'] = 'Utility Type'
                 
-                if st.session_state['sel_owner'] != "All Owners":
-                    group_cols.append('Meter Number')
-                    rename_dict['Meter Number'] = 'Meter Number'
-                    
-                group_cols.append('Service Resource')
-                rename_dict['Service Resource'] = 'Utility Type'
-                
-                rename_dict.update({
-                    'Sum Of Total Incl Vat': 'Gross Sales',
-                    'Payment To Principle': 'Net To Principle',
-                    'Total Service Fee Incl Vat': 'Service Fees',
-                    'Vat': 'VAT',
-                    'Units': 'Units Consumed',
-                    'Unique Id': 'Transactions'
-                })
-                
-                rpt_grouped = rpt_fdf.groupby(group_cols).agg({
-                    'Sum Of Total Incl Vat': 'sum', 
-                    'Payment To Principle': 'sum', 
-                    'Total Service Fee Incl Vat': 'sum', 
-                    'Vat': 'sum', 
-                    'Units': 'sum', 
-                    'Unique Id': 'count'
-                }).reset_index()
-                
-                if "Year_Month_Key" in rpt_grouped.columns:
-                    rpt_grouped = rpt_grouped.sort_values(['Year_Month_Key', 'Building Detail'])
-                else:
-                    rpt_grouped = rpt_grouped.sort_values(['Building Detail'])
-                    
+                rename_dict.update({'Sum Of Total Incl Vat': 'Gross Sales', 'Payment To Principle': 'Net To Principle', 'Total Service Fee Incl Vat': 'Service Fees', 'Vat': 'VAT', 'Units': 'Units Consumed', 'Unique Id': 'Transactions'})
+                rpt_grouped = rpt_fdf.groupby(group_cols).agg({'Sum Of Total Incl Vat': 'sum', 'Payment To Principle': 'sum', 'Total Service Fee Incl Vat': 'sum', 'Vat': 'sum', 'Units': 'sum', 'Unique Id': 'count'}).reset_index()
+                rpt_grouped = rpt_grouped.sort_values(['Year_Month_Key', 'Building Detail']) if "Year_Month_Key" in rpt_grouped.columns else rpt_grouped.sort_values(['Building Detail'])
                 rpt_display = rpt_grouped.rename(columns=rename_dict)
                 totals = {'gross': rpt_display['Gross Sales'].sum(), 'net': rpt_display['Net To Principle'].sum(), 'fees': rpt_display['Service Fees'].sum(), 'vat': rpt_display['VAT'].sum(), 'units': rpt_display['Units Consumed'].sum(), 'tx_count': rpt_display['Transactions'].sum()}
                 
@@ -830,104 +720,39 @@ elif st.session_state['current_page'] == "Reporting":
                 m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
                 
                 st.write("#### 📑 Sales Report Data Grid Preview")
-                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({
-                    'Gross Sales': 'R {:,.2f}', 
-                    'Net To Principle': 'R {:,.2f}', 
-                    'Service Fees': 'R {:,.2f}', 
-                    'VAT': 'R {:,.2f}', 
-                    'Units Consumed': '{:,.2f}'
-                }), use_container_width=True)
+                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 exp_col1, exp_col2 = st.columns(2)
-                
                 window_label = f"Selected Range ({len(local_months_selected)} Months)" if len(local_months_selected) < len(chron_timeline) else "Full Historical Portfolio Range"
-                
                 with exp_col1:
                     xl_buffer = io.BytesIO()
-                    with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: 
-                        rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
+                    with pd.ExcelWriter(xl_buffer, engine='openpyxl') as xl_writer: rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_writer, index=False, sheet_name="Sales Summary Report")
                     st.download_button(label="📥 Export Report as Excel Ledger", data=xl_buffer.getvalue(), file_name=f"Sales_Summary_Report_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
                 with exp_col2:
                     if FPDF:
                         pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display.drop(columns=['Year_Month_Key'], errors='ignore'), total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
                         if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
-
-        # FEATURE WORKFLOW TARGET: NEW BUILDING SUMMARY REPORT GENERATOR TAB (WITH PROPERTY-LEVEL SUBTOTALS)
+                        
         with t2:
             st.markdown("### 🏢 Executive Building Summary Statement Factory")
-            st.write("Generate a breakdown table grouped by property locations with automatic asset subtotals and combined portfolio grand totals.")
+            local_months_b = st.multiselect("Select Reporting Months (Building Summary Scope):", chron_timeline, default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline, key="months_b")
+            b_fdf = working_df[(working_df['Building Detail'].isin(sb_local)) & (working_df['Display_Month'].isin(local_months_b))]
             
-            local_months_b = st.multiselect(
-                "Select Reporting Months (Building Summary Scope):", 
-                chron_timeline, 
-                default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline,
-                key="months_b"
-            )
-            
-            b_fdf = working_df[(working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())) & (working_df['Display_Month'].isin(local_months_b))]
-            
-            if b_fdf.empty:
-                st.warning("No tracking details found matching specified criteria scopes.")
+            if b_fdf.empty: st.warning("No tracking details found matching specified criteria scopes.")
             else:
-                b_grouped = b_fdf.groupby(['Building Detail', 'Service Resource']).agg({
-                    'Sum Of Total Incl Vat': 'sum',
-                    'Payment To Principle': 'sum',
-                    'Total Service Fee Incl Vat': 'sum',
-                    'Vat': 'sum',
-                    'Units': 'sum',
-                    'Unique Id': 'count'
-                }).reset_index()
-                
+                b_grouped = b_fdf.groupby(['Building Detail', 'Service Resource']).agg({'Sum Of Total Incl Vat': 'sum', 'Payment To Principle': 'sum', 'Total Service Fee Incl Vat': 'sum', 'Vat': 'sum', 'Units': 'sum', 'Unique Id': 'count'}).reset_index()
                 final_rows = []
                 unique_buildings = sorted(b_grouped['Building Detail'].unique())
                 
                 for b_item in unique_buildings:
                     b_subset = b_grouped[b_grouped['Building Detail'] == b_item]
                     for _, row in b_subset.iterrows():
-                        final_rows.append({
-                            'Building Location': row['Building Detail'],
-                            'Utility Type': row['Service Resource'],
-                            'Gross Sales': row['Sum Of Total Incl Vat'],
-                            'Net To Principle': row['Payment To Principle'],
-                            'Service Fees': row['Total Service Fee Incl Vat'],
-                            'VAT': row['Vat'],
-                            'Units Consumed': row['Units'],
-                            'Transactions': row['Unique Id']
-                        })
-                    # Interject clean formatted property asset subtotal layer configurations
-                    final_rows.append({
-                        'Building Location': f"🏢 {b_item} - SUBTOTAL",
-                        'Utility Type': "Combined",
-                        'Gross Sales': b_subset['Sum Of Total Incl Vat'].sum(),
-                        'Net To Principle': b_subset['Payment To Principle'].sum(),
-                        'Service Fees': b_subset['Total Service Fee Incl Vat'].sum(),
-                        'VAT': b_subset['Vat'].sum(),
-                        'Units Consumed': b_subset['Units'].sum(),
-                        'Transactions': b_subset['Unique Id'].sum()
-                    })
+                        final_rows.append({'Building Location': row['Building Detail'], 'Utility Type': row['Service Resource'], 'Gross Sales': row['Sum Of Total Incl Vat'], 'Net To Principle': row['Payment To Principle'], 'Service Fees': row['Total Service Fee Incl Vat'], 'VAT': row['Vat'], 'Units Consumed': row['Units'], 'Transactions': row['Unique Id']})
+                    final_rows.append({'Building Location': f"🏢 {b_item} - SUBTOTAL", 'Utility Type': "Combined", 'Gross Sales': b_subset['Sum Of Total Incl Vat'].sum(), 'Net To Principle': b_subset['Payment To Principle'].sum(), 'Service Fees': b_subset['Total Service Fee Incl Vat'].sum(), 'VAT': b_subset['Vat'].sum(), 'Units Consumed': b_subset['Units'].sum(), 'Transactions': b_subset['Unique Id'].sum()})
                     
-                totals_b = {
-                    'gross': b_grouped['Sum Of Total Incl Vat'].sum(),
-                    'net': b_grouped['Payment To Principle'].sum(),
-                    'fees': b_grouped['Total Service Fee Incl Vat'].sum(),
-                    'vat': b_grouped['Vat'].sum(),
-                    'units': b_grouped['Units'].sum(),
-                    'tx_count': b_grouped['Unique Id'].sum()
-                }
-                
-                # Append definitive terminal combined bottom boundary row 
-                final_rows.append({
-                    'Building Location': "🗃️ GRAND PORTFOLIO TOTAL",
-                    'Utility Type': "Aggregate",
-                    'Gross Sales': totals_b['gross'],
-                    'Net To Principle': totals_b['net'],
-                    'Service Fees': totals_b['fees'],
-                    'VAT': totals_b['vat'],
-                    'Units Consumed': totals_b['units'],
-                    'Transactions': totals_b['tx_count']
-                })
-                
+                totals_b = {'gross': b_grouped['Sum Of Total Incl Vat'].sum(), 'net': b_grouped['Payment To Principle'].sum(), 'fees': b_grouped['Total Service Fee Incl Vat'].sum(), 'vat': b_grouped['Vat'].sum(), 'units': b_grouped['Units'].sum(), 'tx_count': b_grouped['Unique Id'].sum()}
+                final_rows.append({'Building Location': "🗃️ GRAND PORTFOLIO TOTAL", 'Utility Type': "Aggregate", 'Gross Sales': totals_b['gross'], 'Net To Principle': totals_b['net'], 'Service Fees': totals_b['fees'], 'VAT': totals_b['vat'], 'Units Consumed': totals_b['units'], 'Transactions': totals_b['tx_count']})
                 b_display_df = pd.DataFrame(final_rows)
                 
                 st.divider()
@@ -939,30 +764,19 @@ elif st.session_state['current_page'] == "Reporting":
                 
                 def highlight_subtotals(row):
                     val = str(row['Building Location'])
-                    if "SUBTOTAL" in val:
-                        return ['background-color: #f1f5f9; font-weight: bold; color: #1e3a8a'] * len(row)
-                    elif "GRAND PORTFOLIO" in val:
-                        return ['background-color: #e2e8f0; font-weight: bold; color: #0f172a; border-top: 2px solid #94a3b8'] * len(row)
+                    if "SUBTOTAL" in val: return ['background-color: #f1f5f9; font-weight: bold; color: #1e3a8a'] * len(row)
+                    elif "GRAND PORTFOLIO" in val: return ['background-color: #e2e8f0; font-weight: bold; color: #0f172a; border-top: 2px solid #94a3b8'] * len(row)
                     return [''] * len(row)
                     
                 st.write("#### 📑 Building Summary Statement Preview")
-                st.dataframe(b_display_df.style.apply(highlight_subtotals, axis=1).format({
-                    'Gross Sales': 'R {:,.2f}', 
-                    'Net To Principle': 'R {:,.2f}', 
-                    'Service Fees': 'R {:,.2f}', 
-                    'VAT': 'R {:,.2f}', 
-                    'Units Consumed': '{:,.2f}',
-                    'Transactions': '{:,}'
-                }), use_container_width=True)
+                st.dataframe(b_display_df.style.apply(highlight_subtotals, axis=1).format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}', 'Transactions': '{:,}'}), use_container_width=True)
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 b_exp_col1, b_exp_col2 = st.columns(2)
                 window_label_b = f"Selected Range ({len(local_months_b)} Months)" if len(local_months_b) < len(chron_timeline) else "Full Historical Portfolio Range"
-                
                 with b_exp_col1:
                     xl_buffer_b = io.BytesIO()
-                    with pd.ExcelWriter(xl_buffer_b, engine='openpyxl') as xl_writer_b:
-                        b_display_df.to_excel(xl_writer_b, index=False, sheet_name="Building Summary Statement")
+                    with pd.ExcelWriter(xl_buffer_b, engine='openpyxl') as xl_writer_b: b_display_df.to_excel(xl_writer_b, index=False, sheet_name="Building Summary Statement")
                     st.download_button(label="📥 Export Building Statement as Excel Ledger", data=xl_buffer_b.getvalue(), file_name=f"Building_Summary_Statement_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
                 with b_exp_col2:
                     if FPDF:
@@ -971,60 +785,32 @@ elif st.session_state['current_page'] == "Reporting":
                         
         with t3:
             st.markdown("### ⚠️ Dormant Meters Audit Suite")
-            st.write("Identify operational meters that have registered absolute zero sales transactions across your historical ledger data files.")
-            
-            dorm_base = working_df[working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())]
-            
-            if dorm_base.empty:
-                st.warning("No tracking records exist mapping back to this building context sequence.")
+            dorm_base = working_df[working_df['Building Detail'].isin(sb_local)]
+            if dorm_base.empty: st.warning("No tracking records exist mapping back to this building context sequence.")
             else:
                 lookback_days = st.slider("Define Dormancy Threshold (Days of Continuous Inactivity):", min_value=15, max_value=120, value=60, step=5)
                 global_max_date = dorm_base['Trans_date'].max()
                 st.info(f"💡 Target lookback reference calculation locked to newest available transaction timestamp: **{global_max_date.strftime('%Y-%m-%d')}**")
                 
-                dorm_grouped = dorm_base.groupby('Meter Number').agg({
-                    'Trans_date': 'max',
-                    'Building Detail': 'first',
-                    'Client': 'first',
-                    'Customer Surname': 'first'
-                }).reset_index()
-                
+                dorm_grouped = dorm_base.groupby('Meter Number').agg({'Trans_date': 'max', 'Building Detail': 'first', 'Client': 'first', 'Customer Surname': 'first'}).reset_index()
                 dorm_grouped['Days Inactive'] = (global_max_date - dorm_grouped['Trans_date']).dt.days
                 dormant_filtered = dorm_grouped[dorm_grouped['Days Inactive'] >= lookback_days].sort_values('Days Inactive', ascending=False)
                 
-                dormant_display = dormant_filtered.rename(columns={
-                    'Meter Number': 'Meter Identifier',
-                    'Trans_date': 'Last Successful Purchase',
-                    'Building Detail': 'Asset Location',
-                    'Client': 'Client Vendor Account',
-                    'Customer Surname': 'Tenant Reference',
-                    'Days Inactive': 'Consecutive Inactivity Days'
-                })
-                
+                dormant_display = dormant_filtered.rename(columns={'Meter Number': 'Meter Identifier', 'Trans_date': 'Last Successful Purchase', 'Building Detail': 'Asset Location', 'Client': 'Client Vendor Account', 'Customer Surname': 'Tenant Reference', 'Days Inactive': 'Consecutive Inactivity Days'})
                 st.write(f"#### 📋 Dormancy Directory Summary ({len(dormant_display)} Meters Flagged)")
-                if dormant_display.empty:
-                    st.success(f"🎉 Complete structural activity verified! Zero meters exceed the {lookback_days}-day lookup constraints.")
+                if dormant_display.empty: st.success(f"🎉 Complete structural activity verified! Zero meters exceed the {lookback_days}-day lookup constraints.")
                 else:
-                    st.dataframe(dormant_display.style.format({
-                        'Last Successful Purchase': lambda x: x.strftime('%Y-%m-%d %H:%M') if not pd.isna(x) else ''
-                    }), use_container_width=True)
-                    
+                    st.dataframe(dormant_display.style.format({'Last Successful Purchase': lambda x: x.strftime('%Y-%m-%d %H:%M') if not pd.isna(x) else ''}), use_container_width=True)
                     xl_buf_dorm = io.BytesIO()
-                    with pd.ExcelWriter(xl_buf_dorm, engine='openpyxl') as xl_wr_dorm:
-                        dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
+                    with pd.ExcelWriter(xl_buf_dorm, engine='openpyxl') as xl_wr_dorm: dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
-# --- 12. USER ADMINISTRATION ---
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
     st.markdown("### 📋 Active System Access Accounts")
-    display_users = u_df[['username', 'role', 'owner_name']].rename(columns={
-        'username': 'System Username Identifier',
-        'role': 'Assigned Access Role',
-        'owner_name': 'Assigned Data Scope Allocation'
-    })
+    display_users = u_df[['username', 'role', 'owner_name']].rename(columns={'username': 'System Username Identifier', 'role': 'Assigned Access Role', 'owner_name': 'Assigned Data Scope Allocation'})
     st.dataframe(display_users.style.set_properties(**{'font-weight': '600', 'color': '#1e293b'}), use_container_width=True)
     st.divider()
     
@@ -1034,54 +820,36 @@ elif st.session_state['current_page'] == "UserAdmin":
             nu = st.text_input("New Landlord Username")
             np = st.text_input("Password", type="password")
             no = st.selectbox("Assign to Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
-            
             if st.form_submit_button("Create Account"):
                 if nu.strip() and np.strip():
-                    if save_user(nu.strip(), np.strip(), "landlord", no):
-                        st.toast(f"Account for '{nu}' created successfully!", icon="✔️")
-                        st.rerun()
-                else:
-                    st.error("Form Input Validation Rejection: Username and password details cannot be empty.")
+                    if save_user(nu.strip(), np.strip(), "landlord", no): st.toast(f"Account for '{nu}' created successfully!", icon="✔️"); st.rerun()
+                else: st.error("Form Input Validation Rejection: Username and password details cannot be empty.")
     with t2:
         ur = st.selectbox("Select Account", u_df['username'].tolist())
         npw = st.text_input("New Password", type="password")
         if st.button("Update Access"): 
-            if update_user_password(ur, npw):
-                st.success("Access Updated.")
-                st.rerun()
+            if update_user_password(ur, npw): st.success("Access Updated."); st.rerun()
     with t3:
         delete_opts = [un for un in u_df['username'].tolist() if un != "admin"]
-        if not delete_opts:
-            st.info("No landlord tracking sub-accounts currently available to purge.")
+        if not delete_opts: st.info("No landlord tracking sub-accounts currently available to purge.")
         else:
             ud = st.selectbox("Select Account to Delete", delete_opts)
             st.warning(f"⚠️ Action Required: Deleting account '{ud}' will permanently revoke their privileges.")
             if st.button("❌ Permanently Purge Account Access", use_container_width=True):
-                if delete_user(ud):
-                    st.success(f"Security Profile for account '{ud}' has been purged successfully.")
-                    st.rerun()
+                if delete_user(ud): st.success(f"Security Profile for account '{ud}' has been purged successfully."); st.rerun()
     with t4:
         st.markdown("### 📢 Broadcast Notices Dispatch Center")
-        st.write("Publish dynamic tracking notification banners drawn instantly onto landlord dashboard positions.")
         with st.form("broadcast_panel"):
             notice_input_body = st.text_area("Alert Banner Message Text Content:", placeholder="Type maintenance details, pricing revisions, or portfolio compliance instructions here...")
             available_landlords = ["All"] + sorted([x for x in u_df['owner_name'].unique().tolist() if x != "All"])
             selected_audience_scope = st.selectbox("Notice Recipient Scope:", available_landlords)
-            
             if st.form_submit_button("🚀 Deploy Notice Banner"):
                 if notice_input_body.strip():
-                    if save_notification(notice_input_body.strip(), selected_audience_scope):
-                        st.success("Notice banner deployed to matching system target channels.")
-                        st.rerun()
-                else:
-                    st.error("Message body text parameter cannot evaluate blank inputs.")
-        
+                    if save_notification(notice_input_body.strip(), selected_audience_scope): st.success("Notice banner deployed to matching system target channels."); st.rerun()
+                else: st.error("Message body text parameter cannot evaluate blank inputs.")
         st.divider()
-        st.write("#### 🧼 Notice Flush Control Utility")
         if st.button("🧹 Clear All Dynamic Alert Banners Everywhere", use_container_width=True):
-            if purge_all_notifications():
-                st.success("All historical system alert banners flushed from production storage.")
-                st.rerun()
+            if purge_all_notifications(): st.success("All historical system alert banners flushed from production storage."); st.rerun()
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Reference & Command Center")
@@ -1103,8 +871,8 @@ elif st.session_state['current_page'] == "Management":
         else:
             dir_df = filtered_meters_df.groupby('Meter Number').agg({'Building Detail': 'first', 'Client': 'first', 'Customer Surname': 'first', 'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Trans_date': 'count'}).rename(columns={'Sum Of Total Incl Vat': 'Billings', 'Units': 'Consumption', 'Trans_date': 'Count'}).reset_index()
             st.dataframe(dir_df.style.format({'Billings': 'R {:,.2f}', 'Consumption': '{:,.2f}'}), use_container_width=True)
-            
             st.divider()
+            
             selected_meter = st.selectbox("Drill Down Target Meter Logs:", sorted(dir_df['Meter Number'].unique().tolist()))
             if selected_meter:
                 ledger_df = working_df[working_df['Meter Number'] == selected_meter].sort_values('Trans_date', ascending=False)
@@ -1116,8 +884,6 @@ elif st.session_state['current_page'] == "Management":
                     if b2.button("🟢 Unblock Connection", use_container_width=True): st.toast(f"Meter {selected_meter} UNBLOCKED.", icon="🔓")
                 with op2:
                     token_type = st.selectbox("STS Instruction Profile", ["Clear Tamper Status", "Key Change Token", "High Power Limit Test"])
-                    if st.button("⚙️ Compile Engineering Instruction", use_container_width=True):
-                        st.info(f"**Generated STS {token_type} Token:**")
-                        st.code(generate_sts_token(), language="text")
+                    if st.button("⚙️ Compile Engineering Instruction", use_container_width=True): st.info(f"**Generated STS {token_type} Token:**"); st.code(generate_sts_token(), language="text")
                 st.divider()
                 st.dataframe(ledger_df, use_container_width=True)
