@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -367,7 +368,8 @@ def load_users():
             admin_pass = hashlib.sha256("Sillycat01".encode()).hexdigest()
             df_init = pd.DataFrame([{"username": "admin", "password": admin_pass, "role": "admin", "owner_name": "All"}])
             try:
-                df_init.to_sql("users", engine, if_exists="replace", index=False)
+                with engine.begin() as conn:
+                    df_init.to_sql("users", conn, if_exists="replace", index=False)
                 return df_init
             except Exception as sql_e:
                 st.error("🚨 System Table Initialization Failed")
@@ -383,7 +385,7 @@ def save_user(u, p, r, o):
         query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
         with engine.begin() as conn:
             conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
-        st.cache_data.clear()
+        st.cache_data.clear() 
         return True
     except Exception as database_error:
         st.error("🚨 Database Engine Rejected User Creation Entry")
@@ -466,30 +468,37 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
-# --- FIXED DE-DUPLICATION LAYER FRAMEWORK ENGINE ---
+# --- HARDENED DE-DUPLICATION DATABASE WRITER ENGINE ---
 def update_database(f, m):
-    df = pd.read_csv(f)
-    df.columns = df.columns.str.strip()
-    
-    if m == "append":
-        blacklist_ids = set() # FIXED: Pre-initialize scope array to strictly prevent UnboundLocalErrors
-        try:
-            existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', engine)
-            if 'Unique Id' in existing_records.columns:
-                blacklist_ids = set(existing_records['Unique Id'].dropna().tolist())
-        except Exception:
-            pass
-
-        if 'Unique Id' in df.columns and blacklist_ids:
-            df = df[~df['Unique Id'].isin(blacklist_ids)]
-
-    if not df.empty:
-        df.to_sql("transactions", engine, if_exists=m, index=False)
-        st.toast(f"✔️ Database Sync Complete. Processed {len(df)} unique record insertions.", icon="🚀")
-    else:
-        st.toast("ℹ️ Duplicate Upload Blocked. All entries within target ledger already exist in memory database.", icon="ℹ️")
+    try:
+        df = pd.read_csv(f)
+        df.columns = df.columns.str.strip()
         
-    st.cache_data.clear()
+        if m == "append":
+            blacklist_ids = set()
+            try:
+                with engine.connect() as read_conn:
+                    existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', read_conn)
+                if 'Unique Id' in existing_records.columns:
+                    blacklist_ids = set(existing_records['Unique Id'].dropna().tolist())
+            except Exception:
+                pass
+
+            if 'Unique Id' in df.columns and blacklist_ids:
+                df = df[~df['Unique Id'].isin(blacklist_ids)]
+
+        if not df.empty:
+            # CRITICAL SECURITY CORRECTION: Pass true active transaction objects (conn) instead of global engine pointers
+            with engine.begin() as conn:
+                df.to_sql("transactions", conn, if_exists=m, index=False)
+            st.toast(f"✔️ Database Sync Complete. Processed {len(df)} unique record insertions.", icon="🚀")
+        else:
+            st.toast("ℹ️ Duplicate Upload Blocked. All entries within target ledger already exist in database.", icon="ℹ️")
+            
+        st.cache_data.clear()
+    except Exception as data_sync_exception:
+        st.error("🚨 Critical Failure Encountered During Spreadsheet Synchronization")
+        st.exception(data_sync_exception)
 
 # --- 7. LOGIN GATING ---
 if not st.session_state['logged_in']:
@@ -721,7 +730,7 @@ elif st.session_state['current_page'] == "Reporting":
                 m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
                 
                 st.write("#### 📑 Sales Report Data Grid Preview")
-                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:TC_CODE_2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
+                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 exp_col1, exp_col2 = st.columns(2)
@@ -769,7 +778,7 @@ elif st.session_state['current_page'] == "Reporting":
                     elif "GRAND PORTFOLIO" in val: return ['background-color: #e2e8f0; font-weight: bold; color: #0f172a; border-top: 2px solid #94a3b8'] * len(row)
                     return [''] * len(row)
                     
-                st.write("#### 📑 Building Summary Statement Preview")
+                st.write("#### 📊 Building Summary Statement Preview")
                 st.dataframe(b_display_df.style.apply(highlight_subtotals, axis=1).format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}', 'Transactions': '{:,}'}), use_container_width=True)
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
