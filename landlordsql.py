@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -259,7 +260,7 @@ def save_user(u, p, r, o):
     query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
     with engine.connect() as conn:
         conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
-        conn.commit()
+        conn.conn.commit() if hasattr(conn, 'conn') else conn.commit()
     return True
 
 def update_user_password(u, p):
@@ -383,19 +384,24 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
-        # --- FIXED BLOCK: 4-COLUMN UTILITY SPECIFIC EXECUTIVES METRIC PANEL ---
+        # Segment data for calculations
         elec_sub = fdf[fdf['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in fdf.columns else pd.DataFrame()
         water_sub = fdf[fdf['Service Resource'].str.lower() == 'water'] if 'Service Resource' in fdf.columns else pd.DataFrame()
         
-        dash_kpi1, dash_kpi2, dash_kpi3, dash_kpi4 = st.columns(4)
-        with dash_kpi1:
-            st.metric("Electricity Sales", f"R {elec_sub['Sum Of Total Incl Vat'].sum():,.2f}")
-        with dash_kpi2:
-            st.metric("Electricity Consumption", f"{elec_sub['Units'].sum():,.2f} Units")
-        with dash_kpi3:
-            st.metric("Water Sales", f"R {water_sub['Sum Of Total Incl Vat'].sum():,.2f}")
-        with dash_kpi4:
-            st.metric("Water Consumption", f"{water_sub['Units'].sum():,.2f} Units")
+        # --- FIXED BLOCK: 2x2 EXECUTIVE PERFORMANCE SUMMARY MATRIX ---
+        matrix_df = pd.DataFrame({
+            "Electricity": [
+                f"R {elec_sub['Sum Of Total Incl Vat'].sum():,.2f}", 
+                f"{elec_sub['Units'].sum():,.2f} Units"
+            ],
+            "Water": [
+                f"R {water_sub['Sum Of Total Incl Vat'].sum():,.2f}", 
+                f"{water_sub['Units'].sum():,.2f} Units"
+            ]
+        }, index=["Sales", "Consumption"])
+        
+        st.write("#### 📊 Period Performance Summary Matrix")
+        st.table(matrix_df)
             
         st.divider()
         
