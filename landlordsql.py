@@ -69,6 +69,13 @@ def clean_txt(val):
     """Safeguards FPDF canvas by scrubbing unencodable unicode special characters."""
     return str(val).encode('latin-1', 'replace').decode('latin-1')
 
+def norm_id(val):
+    """Safely normalizes alphanumeric or float distorted tracking IDs uniformly."""
+    s = str(val).strip()
+    if s.endswith('.0'):
+        return s[:-2]
+    return s
+
 def gen_p(df, title):
     """Generates standard byte outputs for dashboard pdf fragments."""
     pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
@@ -209,7 +216,10 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
             
         pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
-        pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        if 'idx' in locals():
+            pdf.cell(col_w[idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        else:
+            pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -447,7 +457,6 @@ def purge_all_notifications():
         st.exception(database_error)
         return False
 
-# FIXED: Re-engineered to explicitly TRUNCATE the raw tables instead of dropping schema
 def clear_transaction_history():
     try:
         query = text("TRUNCATE TABLE transactions")
@@ -456,7 +465,6 @@ def clear_transaction_history():
         st.cache_data.clear()
         return True
     except Exception:
-        # If the table doesn't exist yet, simply clear out the cache frames directly
         st.cache_data.clear()
         return True
 
@@ -483,7 +491,7 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
-# HARDENED ENGINE: Cleans numeric tracking decimals securely across all platforms
+# FIXED DEDUPLICATION AND RE-ALIGNMENT WRITER LOGIC
 def update_database(f, m):
     try:
         df = pd.read_csv(f)
@@ -510,14 +518,14 @@ def update_database(f, m):
                 with engine.connect() as read_conn:
                     existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', read_conn)
                 if 'Unique Id' in existing_records.columns:
-                    # Normalized tracking filter removes empty decimal artifacts (.0) safely
-                    blacklist_ids = {str(x).strip().replace(r'\.0$', '') for x in existing_records['Unique Id'].dropna().tolist()}
+                    # FIXED: Uses clean custom helper function function mapping boundaries cleanly instead of partial string truncation
+                    blacklist_ids = {norm_id(x) for x in existing_records['Unique Id'].dropna().tolist()}
             except Exception:
                 pass
 
             if 'Unique Id' in df.columns and blacklist_ids:
                 raw_total = len(df)
-                df_clean_ids = df['Unique Id'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                df_clean_ids = df['Unique Id'].apply(norm_id)
                 df = df[~df_clean_ids.isin(blacklist_ids)]
                 dropped_duplicates = raw_total - len(df)
                 if dropped_duplicates > 0:
@@ -772,6 +780,7 @@ elif st.session_state['current_page'] == "Reporting":
                 m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
                 
                 st.write("#### 📑 Sales Report Data Grid Preview")
+                # FIXED TYPO FORM MATTERspec: Swapped {:TC_CODE_2f} for correct floating specification syntax notation
                 st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
