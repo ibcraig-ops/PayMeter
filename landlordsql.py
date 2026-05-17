@@ -216,10 +216,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
             
         pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
-        if 'idx' in locals():
-            pdf.cell(col_w[idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
-        else:
-            pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -491,7 +488,7 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
-# FIXED DEDUPLICATION AND RE-ALIGNMENT WRITER LOGIC
+# --- 🚀 RE-ENGINEERED STRATEGIC STAGING MERGE APPRENDER ENGINE ---
 def update_database(f, m):
     try:
         df = pd.read_csv(f)
@@ -512,32 +509,44 @@ def update_database(f, m):
         df.columns = df.columns.str.strip().str.lower()
         df = df.rename(columns=col_map)
         
-        if m == "append":
-            blacklist_ids = set()
-            try:
-                with engine.connect() as read_conn:
-                    existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', read_conn)
-                if 'Unique Id' in existing_records.columns:
-                    # FIXED: Uses clean custom helper function function mapping boundaries cleanly instead of partial string truncation
-                    blacklist_ids = {norm_id(x) for x in existing_records['Unique Id'].dropna().tolist()}
-            except Exception:
-                pass
+        # Safe string cleaning prior to any insertion execution
+        if 'Unique Id' in df.columns:
+            df = df.dropna(subset=['Unique Id'])
+            df['Unique Id'] = df['Unique Id'].apply(norm_id)
 
-            if 'Unique Id' in df.columns and blacklist_ids:
-                raw_total = len(df)
-                df_clean_ids = df['Unique Id'].apply(norm_id)
-                df = df[~df_clean_ids.isin(blacklist_ids)]
-                dropped_duplicates = raw_total - len(df)
-                if dropped_duplicates > 0:
-                    st.sidebar.info(f"ℹ️ Filtered out {dropped_duplicates} duplicate records from file.")
+        if df.empty:
+            st.sidebar.warning("⚠️ CSV sheet maps back empty structure parameters.")
+            return
 
-        if not df.empty:
-            with engine.begin() as conn:
-                df.to_sql("transactions", conn, if_exists=m, index=False)
-            st.sidebar.success(f"🚀 Ingested {len(df)} new records successfully!")
-        else:
-            st.sidebar.warning("⚠️ Processing Aborted: Every row inside file is already tracked inside history logs.")
-            
+        with engine.begin() as conn:
+            if m == "overwrite":
+                df.to_sql("transactions", conn, if_exists="replace", index=False)
+                st.sidebar.success(f"🚀 Overwrote data suite with {len(df)} lines.")
+            else:
+                # 1. Pipeline raw data streams safely into staging table first
+                df.to_sql("transactions_staging", conn, if_exists="replace", index=False)
+                
+                # 2. Check if primary target matrix tables exist
+                table_check = conn.execute(text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'transactions')")).scalar()
+                
+                if not table_check:
+                    conn.execute(text('ALTER TABLE transactions_staging RENAME TO transactions'))
+                    st.sidebar.success(f"🚀 Main ledger built cleanly with {len(df)} initial files.")
+                else:
+                    # 3. Native Database Upsert comparison casting to prevent float decimal discrepancies entirely
+                    merge_query = text("""
+                        INSERT INTO transactions 
+                        SELECT * FROM transactions_staging 
+                        WHERE CAST("Unique Id" AS VARCHAR) NOT IN (
+                            SELECT CAST("Unique Id" AS VARCHAR) 
+                            FROM transactions 
+                            WHERE "Unique Id" IS NOT NULL
+                        );
+                    """)
+                    conn.execute(merge_query)
+                    conn.execute(text("DROP TABLE IF EXISTS transactions_staging"))
+                    st.sidebar.success("🚀 Append cycle executed natively on database engine.")
+                    
         st.cache_data.clear()
     except Exception as data_sync_exception:
         st.error("🚨 Critical Failure Encountered During Spreadsheet Synchronization")
@@ -780,7 +789,6 @@ elif st.session_state['current_page'] == "Reporting":
                 m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
                 
                 st.write("#### 📑 Sales Report Data Grid Preview")
-                # FIXED TYPO FORM MATTERspec: Swapped {:TC_CODE_2f} for correct floating specification syntax notation
                 st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
