@@ -69,13 +69,6 @@ def clean_txt(val):
     """Safeguards FPDF canvas by scrubbing unencodable unicode special characters."""
     return str(val).encode('latin-1', 'replace').decode('latin-1')
 
-def norm_id(val):
-    """Safely normalizes alphanumeric or float distorted tracking IDs uniformly."""
-    s = str(val).strip()
-    if s.endswith('.0'):
-        return s[:-2]
-    return s
-
 def gen_p(df, title):
     """Generates standard byte outputs for dashboard pdf fragments."""
     pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
@@ -488,10 +481,10 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
-# --- 🎯 100% FOOLPROOF BULLETPROOF DATA SYNC ENGINE ---
+# --- ULTRA-RELIABLE, ZERO-FILTER NATIVE DATABASE DIRECT SYNCHRONIZER ENGINE ---
 def update_database(f, m):
     try:
-        df_new = pd.read_csv(f)
+        df = pd.read_csv(f)
         
         col_map = {
             "unique id": "Unique Id", "unique_id": "Unique Id",
@@ -506,52 +499,22 @@ def update_database(f, m):
             "vat": "Vat", "units": "Units", "client": "Client", "customer surname": "Customer Surname"
         }
         
-        df_new.columns = df_new.columns.str.strip().str.lower()
-        df_new = df_new.rename(columns=col_map)
+        df.columns = df.columns.str.strip().str.lower()
+        df = df.rename(columns=col_map)
         
-        if 'Unique Id' in df_new.columns:
-            df_new = df_new.dropna(subset=['Unique Id'])
-            df_new['Unique Id'] = df_new['Unique Id'].apply(norm_id)
-            
-        if df_new.empty:
-            st.sidebar.warning("⚠️ Uploaded sheet contains no valid unique identifiers.")
+        if df.empty:
+            st.sidebar.warning("⚠️ Uploaded file template contains zero rows.")
             return
 
-        # PURE PYTHON MERGING STRATEGY (100% IMMUNE TO PORT SCHEDULING INTERRUPTIONS)
-        if m == "append":
-            try:
-                # Read whatever is currently sitting inside the production schema table
-                df_existing = pd.read_sql('SELECT * FROM transactions', engine)
-                if not df_existing.empty:
-                    if 'Unique Id' in df_existing.columns:
-                        df_existing['Unique Id'] = df_existing['Unique Id'].apply(norm_id)
-                    
-                    # Glue both data sheets together in local memory space
-                    raw_count_before = len(df_new)
-                    df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-                    
-                    # Deduplicate safely using Python string mappings
-                    df_combined['temp_verify_id'] = df_combined['Unique Id'].astype(str).str.strip()
-                    df_combined = df_combined.drop_duplicates(subset=['temp_verify_id'], keep='first')
-                    df_combined = df_combined.drop(columns=['temp_verify_id'])
-                    
-                    total_added = len(df_combined) - len(df_existing)
-                    st.sidebar.info(f"ℹ️ Filtered out {raw_count_before - total_added} existing records from file.")
-                else:
-                    df_combined = df_new
-            except Exception:
-                df_combined = df_new
-        else:
-            df_combined = df_new
-
-        # Commit cleanly back down to production space by completely overwriting structural layouts
-        if not df_combined.empty:
-            with engine.begin() as conn:
-                df_combined.to_sql("transactions", conn, if_exists="replace", index=False)
-            st.sidebar.success(f"🚀 Success! Production dataset is now securely holding {len(df_combined)} rows.")
-        else:
-            st.sidebar.warning("⚠️ Operation abandoned: Ledger left with 0 rows.")
-            
+        with engine.begin() as conn:
+            if m == "replace":
+                df.to_sql("transactions", conn, if_exists="replace", index=False)
+                st.sidebar.success(f"🚀 Overwrote data suite with {len(df)} rows.")
+            else:
+                # Pure, direct database append operations. No custom filtering logic to glitch out.
+                df.to_sql("transactions", conn, if_exists="append", index=False)
+                st.sidebar.success(f"🚀 Appended {len(df)} lines successfully!")
+                
         st.cache_data.clear()
     except Exception as data_sync_exception:
         st.error("🚨 Critical Failure Encountered During Spreadsheet Synchronization")
