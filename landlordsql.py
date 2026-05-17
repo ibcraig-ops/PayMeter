@@ -242,7 +242,6 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     
     return bytes(pdf.output())
 
-# FEATURE: NEW INDEPENDENT PDF BUILDER ENGINE FOR PROPERTY-WISE SUB-TOTALED CONSOLIDATIONS
 def gen_building_summary_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
     if not FPDF:
         return None
@@ -466,10 +465,30 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
+# --- RE-ENGINEERED SYNC ENGINE: Performs inline in-memory anti-duplicate scanning via Unique Id mapping sets ---
 def update_database(f, m):
     df = pd.read_csv(f)
     df.columns = df.columns.str.strip()
-    df.to_sql("transactions", engine, if_exists=m, index=False)
+    
+    if m == "append":
+        try:
+            # Load only the column we need to perform verification, protecting memory overhead
+            existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', engine)
+            blacklist_ids = set(existing_records['Unique Id'].dropna().tolist())
+            
+            # Drops rows whose specific Unique Identifier key already matches current storage blocks
+            if 'Unique Id' in df.columns:
+                df = df[~df['Unique Id'].isin(blacklist_ids)]
+        except Exception:
+            # If the database table is completely missing or empty, ignore filters and proceed
+            pass
+
+    if not df.empty:
+        df.to_sql("transactions", engine, if_exists=m, index=False)
+        st.toast(f"✔️ Database Sync Complete. Processed {len(df)} unique record insertions.", icon="🚀")
+    else:
+        st.toast("ℹ️ Duplicate Upload Blocked. All entries within target ledger already exist in memory database.", icon="ℹ️")
+        
     st.cache_data.clear()
 
 # --- 7. LOGIN GATING ---
@@ -608,6 +627,7 @@ if st.session_state['current_page'] == "Dashboard":
             
         st.divider()
         
+        # 1. PERFORMANCE TREND BAR GRAPH
         st.subheader("📈 Performance Trend")
         if 'Service Resource' in fdf.columns:
             trend_data = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Sum Of Total Incl Vat'].sum().reset_index()
@@ -734,7 +754,7 @@ elif st.session_state['current_page'] == "Reporting":
     if working_df.empty:
         st.info("Please sync asset profiles to access report generation frameworks.")
     else:
-        # FIXED METHOD: Expanded multi-tab framework signature to accept the new Building Summary compilation tab
+        # SYSTEM UPDATE: Expanded tab routing array to natively register building subtotals
         t1, t2, t3 = st.tabs(["📊 Financial Sales Factory", "🏢 Building Summary Report", "⚠️ Dormant Meters Audit"])
         
         with t1:
@@ -833,13 +853,13 @@ elif st.session_state['current_page'] == "Reporting":
                         pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display.drop(columns=['Year_Month_Key'], errors='ignore'), total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
                         if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
 
-        # FIXED WORKFLOW TARGET: NEW BUILDING CONSOLIDATION TAB FOR MULTI-ASSET LANDLORDS
+        # FEATURE WORKFLOW TARGET: NEW BUILDING SUMMARY REPORT GENERATOR TAB (WITH PROPERTY-LEVEL SUBTOTALS)
         with t2:
             st.markdown("### 🏢 Executive Building Summary Statement Factory")
             st.write("Generate a breakdown table grouped by property locations with automatic asset subtotals and combined portfolio grand totals.")
             
             local_months_b = st.multiselect(
-                "Select Reporting Months (Building summary Scope):", 
+                "Select Reporting Months (Building Summary Scope):", 
                 chron_timeline, 
                 default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline,
                 key="months_b"
