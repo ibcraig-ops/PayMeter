@@ -393,7 +393,10 @@ if st.session_state['current_page'] == "Dashboard":
         w_sales = water_sub['Sum Of Total Incl Vat'].sum()
         w_units = water_sub['Units'].sum()
         
-        # --- FIXED BLOCK: PREMIUM EXECUTIVE HTML PERFORMANCE SUMMARY MATRIX ---
+        # FIXED BLOCK: Added a 4th column to sum up metrics across utility scopes
+        t_sales = e_sales + w_sales
+        t_units = e_units + w_units
+        
         st.write("#### 📊 Period Performance Summary Matrix")
         
         html_matrix = f"""
@@ -403,18 +406,21 @@ if st.session_state['current_page'] == "Dashboard":
                     <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">Metric Summary Matrix</th>
                     <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">⚡ Electricity</th>
                     <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">💧 Water</th>
+                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">🏢 Total Scope</th>
                 </tr>
             </thead>
             <tbody>
                 <tr style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0;">
                     <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px; width: 20%;">💰 Sales</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 40%;">R {e_sales:,.2f}</td>
-                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 40%;">R {w_sales:,.2f}</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {e_sales:,.2f}</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {w_sales:,.2f}</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0f172a; background-color: #f1f5f9; width: 28%;">R {t_sales:,.2f}</td>
                 </tr>
                 <tr style="background-color: #ffffff;">
                     <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px;">📊 Consumption</td>
                     <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{e_units:,.2f} Units</td>
                     <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{w_units:,.2f} Units</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #475569; background-color: #f1f5f9;">{t_units:,.2f} Units</td>
                 </tr>
             </tbody>
         </table>
