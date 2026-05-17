@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -385,7 +384,7 @@ def save_user(u, p, r, o):
         query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
         with engine.begin() as conn:
             conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
-        st.cache_data.clear() 
+        st.cache_data.clear()
         return True
     except Exception as database_error:
         st.error("🚨 Database Engine Rejected User Creation Entry")
@@ -448,6 +447,7 @@ def purge_all_notifications():
         st.exception(database_error)
         return False
 
+# FIXED LAYOUT VULNERABILITY: Prevent silent row drops on unparsed formats or null spaces
 @st.cache_data(ttl=60)
 def load_master_data():
     try:
@@ -458,17 +458,21 @@ def load_master_data():
         df['Payment To Principle'] = pd.to_numeric(df['Payment To Principle'], errors='coerce').fillna(0)
         df['Total Service Fee Incl Vat'] = pd.to_numeric(df['Total Service Fee Incl Vat'], errors='coerce').fillna(0)
         df['Vat'] = pd.to_numeric(df['Vat'], errors='coerce').fillna(0)
-        df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
-        df = df.dropna(subset=['Trans_date', 'Owner Detail', 'Building Detail'])
         
-        df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m')
-        df['Month'] = df['Trans_date'].dt.strftime('%B')
-        df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str)
+        # Parse cleanly while preserving rows with format fallbacks
+        df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
+        
+        df['Owner Detail'] = df['Owner Detail'].fillna("Missing Owner").astype(str).str.strip()
+        df['Building Detail'] = df['Building Detail'].fillna("Missing Building").astype(str).str.strip()
+        
+        df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m').fillna("Unknown Period")
+        df['Month'] = df['Trans_date'].dt.strftime('%B').fillna("Unknown Month")
+        df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str).fillna("")
         df['Meter_Search'] = df['Meter Number'].astype(str).str.strip()
         return df
     except: return pd.DataFrame()
 
-# --- HARDENED DE-DUPLICATION DATABASE WRITER ENGINE ---
+# FIXED SECURITY CORRECTION: Normalize validation maps to string objects to bypass floating-point type comparison gaps
 def update_database(f, m):
     try:
         df = pd.read_csv(f)
@@ -480,15 +484,15 @@ def update_database(f, m):
                 with engine.connect() as read_conn:
                     existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', read_conn)
                 if 'Unique Id' in existing_records.columns:
-                    blacklist_ids = set(existing_records['Unique Id'].dropna().tolist())
+                    blacklist_ids = {str(x).strip().split('.')[0] for x in existing_records['Unique Id'].dropna().tolist()}
             except Exception:
                 pass
 
             if 'Unique Id' in df.columns and blacklist_ids:
-                df = df[~df['Unique Id'].isin(blacklist_ids)]
+                df_clean_ids = df['Unique Id'].astype(str).str.strip().str.split('.').str[0]
+                df = df[~df_clean_ids.isin(blacklist_ids)]
 
         if not df.empty:
-            # CRITICAL SECURITY CORRECTION: Pass true active transaction objects (conn) instead of global engine pointers
             with engine.begin() as conn:
                 df.to_sql("transactions", conn, if_exists=m, index=False)
             st.toast(f"✔️ Database Sync Complete. Processed {len(df)} unique record insertions.", icon="🚀")
