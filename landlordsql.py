@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -200,7 +199,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
             
         pdf.cell(col_w[c_idx], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Gross Sales']:,.2f}", 1, 0, 'R', True); c_idx += 1
-        pdf.cell(col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
+        pdf.cell(col_w[idx] if 'idx' in locals() else col_w[c_idx], 7, f"R {r['Net To Principle']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['Service Fees']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"R {r['VAT']:,.2f}", 1, 0, 'R', True); c_idx += 1
         pdf.cell(col_w[c_idx], 7, f"{r['Units Consumed']:,.2f}", 1, 0, 'R', True); c_idx += 1
@@ -260,7 +259,7 @@ def save_user(u, p, r, o):
     query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
     with engine.connect() as conn:
         conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
-        conn.conn.commit() if hasattr(conn, 'conn') else conn.commit()
+        conn.commit()
     return True
 
 def update_user_password(u, p):
@@ -384,24 +383,43 @@ if st.session_state['current_page'] == "Dashboard":
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
-        # Segment data for calculations
+        # Segment data lines for calculation arrays
         elec_sub = fdf[fdf['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in fdf.columns else pd.DataFrame()
         water_sub = fdf[fdf['Service Resource'].str.lower() == 'water'] if 'Service Resource' in fdf.columns else pd.DataFrame()
         
-        # --- FIXED BLOCK: 2x2 EXECUTIVE PERFORMANCE SUMMARY MATRIX ---
-        matrix_df = pd.DataFrame({
-            "Electricity": [
-                f"R {elec_sub['Sum Of Total Incl Vat'].sum():,.2f}", 
-                f"{elec_sub['Units'].sum():,.2f} Units"
-            ],
-            "Water": [
-                f"R {water_sub['Sum Of Total Incl Vat'].sum():,.2f}", 
-                f"{water_sub['Units'].sum():,.2f} Units"
-            ]
-        }, index=["Sales", "Consumption"])
+        # Calculate isolated metric values
+        e_sales = elec_sub['Sum Of Total Incl Vat'].sum()
+        e_units = elec_sub['Units'].sum()
+        w_sales = water_sub['Sum Of Total Incl Vat'].sum()
+        w_units = water_sub['Units'].sum()
         
+        # --- FIXED BLOCK: PREMIUM EXECUTIVE HTML PERFORMANCE SUMMARY MATRIX ---
         st.write("#### 📊 Period Performance Summary Matrix")
-        st.table(matrix_df)
+        
+        html_matrix = f"""
+        <table style="width:100%; border-collapse: collapse; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px;">
+            <thead>
+                <tr style="background-color: #1e3a8a; color: white; text-align: left;">
+                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">Metric Summary Matrix</th>
+                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">⚡ Electricity</th>
+                    <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">💧 Water</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0;">
+                    <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px; width: 20%;">💰 Sales</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 40%;">R {e_sales:,.2f}</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 40%;">R {w_sales:,.2f}</td>
+                </tr>
+                <tr style="background-color: #ffffff;">
+                    <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px;">📊 Consumption</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{e_units:,.2f} Units</td>
+                    <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{w_units:,.2f} Units</td>
+                </tr>
+            </tbody>
+        </table>
+        """
+        st.markdown(html_matrix, unsafe_allow_html=True)
             
         st.divider()
         
