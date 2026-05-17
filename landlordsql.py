@@ -36,7 +36,6 @@ try:
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
-    # HARDENED MIGRATION: Natively handle table tracking definitions
     with engine.begin() as init_conn:
         init_conn.execute(text("""
             CREATE TABLE IF NOT EXISTS notifications (
@@ -242,7 +241,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     
     return bytes(pdf.output())
 
-# --- 6. DATABASE FUNCTIONS (HARDENED TRANSACTION CYCLES) ---
+# --- 6. DATABASE FUNCTIONS ---
 def load_users():
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
@@ -265,7 +264,6 @@ def load_users():
             st.sidebar.error("❌ App Connection Failed")
             st.stop()
 
-# HARDENED: Wrapped with diagnostic output handlers to visually trap constraints or schema validation issues
 def save_user(u, p, r, o):
     try:
         hp = hashlib.sha256(p.encode()).hexdigest()
@@ -754,9 +752,18 @@ elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
+    # --- FIXED FEATURE WORKFLOW: Master active directory rendering layer pushed to top of view frame ---
+    st.markdown("### 📋 Active System Access Accounts")
+    display_users = u_df[['username', 'role', 'owner_name']].rename(columns={
+        'username': 'System Username Identifier',
+        'role': 'Assigned Access Role',
+        'owner_name': 'Assigned Data Scope Allocation'
+    })
+    st.dataframe(display_users.style.set_properties(**{'font-weight': '600', 'color': '#1e293b'}), use_container_width=True)
+    st.divider()
+    
     t1, t2, t3, t4 = st.tabs(["Add Landlord", "Reset Password", "Delete User", "📢 Broadcast Notice"])
     with t1:
-        # FIXED: Enforced clear_on_submit to streamline execution flow inside standard text inputs
         with st.form("create_landlord", clear_on_submit=True):
             nu = st.text_input("New Landlord Username")
             np = st.text_input("Password", type="password")
