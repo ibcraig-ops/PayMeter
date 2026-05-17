@@ -36,6 +36,18 @@ try:
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
+    # AUTOMATED MIGRATION: Ensure notice vault infrastructure tables are provisioned in database
+    with engine.connect() as init_conn:
+        init_conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                notice_text TEXT NOT NULL,
+                target_landlord VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        init_conn.commit()
+
 except Exception as e:
     st.error("🚨 System Connection Traceback Error Logged:")
     st.exception(e)
@@ -277,6 +289,30 @@ def delete_user(u):
         conn.commit()
     return True
 
+# FEATURE FUNCTIONS: Notification data handlers
+def save_notification(notice_text, target):
+    query = text("INSERT INTO notifications (notice_text, target_landlord) VALUES (:txt, :tgt)")
+    with engine.connect() as conn:
+        conn.execute(query, {"txt": notice_text, "tgt": target})
+        conn.commit()
+    return True
+
+def load_active_notifications(target_landlord):
+    try:
+        query = text("SELECT notice_text FROM notifications WHERE target_landlord = 'All' OR target_landlord = :tgt ORDER BY created_at DESC")
+        with engine.connect() as conn:
+            res = conn.execute(query, {"tgt": target_landlord}).fetchall()
+        return [row[0] for row in res]
+    except:
+        return []
+
+def purge_all_notifications():
+    query = text("TRUNCATE TABLE notifications")
+    with engine.connect() as conn:
+        conn.execute(query)
+        conn.commit()
+    return True
+
 @st.cache_data(ttl=60)
 def load_master_data():
     try:
@@ -376,28 +412,40 @@ else:
     with st.sidebar:
         if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
 
-# --- 10. PAGES ---
+
+# --- 10. PREMIUM TOP-OF-PAGE NOTIFICATION LAYER ---
+if st.session_state['logged_in']:
+    target_scope = st.session_state['assigned_owner'] if st.session_state['user_role'] == 'landlord' else 'All'
+    active_alerts = load_active_notifications(target_scope)
+    for alert_msg in active_alerts:
+        st.markdown(f"""
+        <div style="background-color: #fffbeb; border-left: 5px solid #f59e0b; padding: 12px 18px; margin-top: 5px; margin-bottom: 18px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.04); font-family: Arial, sans-serif;">
+            <span style="font-size: 15px; margin-right: 8px;">📢</span>
+            <strong style="color: #b45309; font-size: 13px; text-transform: uppercase; letter-spacing: 0.3px;">Executive Notice:</strong>
+            <span style="color: #78350f; font-size: 13.5px; margin-left: 6px; font-weight: 500;">{alert_msg}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# --- 11. VIEWPORT PAGES CONTROLLER ROUTER ---
 
 if st.session_state['current_page'] == "Dashboard":
     if fdf.empty: st.warning("No data matches selected timeline or building parameters.")
     else:
         st.title(f"🏢 {st.session_state['sel_owner']} Overview")
         
-        # Segment data lines for calculation arrays
         elec_sub = fdf[fdf['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in fdf.columns else pd.DataFrame()
         water_sub = fdf[fdf['Service Resource'].str.lower() == 'water'] if 'Service Resource' in fdf.columns else pd.DataFrame()
         
-        # Calculate isolated metric values
         e_sales = elec_sub['Sum Of Total Incl Vat'].sum()
         e_units = elec_sub['Units'].sum()
         w_sales = water_sub['Sum Of Total Incl Vat'].sum()
         w_units = water_sub['Units'].sum()
         
-        # FIXED BLOCK: Added a 4th column to sum up metrics across utility scopes
         t_sales = e_sales + w_sales
         t_units = e_units + w_units
         
-        st.write("#### 📊 Period Performance Summary Matrix")
+        st.write("#### 📊 Period Performance Summary Summary Matrix")
         
         html_matrix = f"""
         <table style="width:100%; border-collapse: collapse; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px;">
@@ -429,7 +477,6 @@ if st.session_state['current_page'] == "Dashboard":
             
         st.divider()
         
-        # 1. PERFORMANCE TREND BAR GRAPH
         st.subheader("📈 Performance Trend")
         trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
         st.plotly_chart(px.bar(
@@ -536,7 +583,6 @@ elif st.session_state['current_page'] == "Analytics":
         with c3: st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Units'].sum().reset_index(), x='Year_Month_Key', y='Units', markers=True, title="Consumption Volatility Trend (Units)"), use_container_width=True)
         with c4: st.plotly_chart(px.bar(fdf.groupby('Building Detail')['Sum Of Total Incl Vat'].sum().reset_index().sort_values('Sum Of Total Incl Vat', ascending=False).head(15), y='Building Detail', x='Sum Of Total Incl Vat', orientation='h', title="Top 15 Buildings by Billings Gross"), use_container_width=True)
 
-# --- 11. REPORTING SUITE PAGE ---
 elif st.session_state['current_page'] == "Reporting":
     st.title("🗂️ Executive Reporting Suite")
     if working_df.empty:
@@ -685,12 +731,12 @@ elif st.session_state['current_page'] == "Reporting":
                         dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
-# --- 12. USER ADMINISTRATION ---
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
-    t1, t2, t3 = st.tabs(["Add Landlord", "Reset Password", "Delete User"])
+    # MODIFICATION: Added 4th Broadcast notice workspace layout control container tab
+    t1, t2, t3, t4 = st.tabs(["Add Landlord", "Reset Password", "Delete User", "📢 Broadcast Notice"])
     with t1:
         with st.form("create_landlord"):
             nu, np = st.text_input("New Username"), st.text_input("Password", type="password")
@@ -711,6 +757,31 @@ elif st.session_state['current_page'] == "UserAdmin":
                 delete_user(ud)
                 st.success(f"Security Profile for account '{ud}' has been purges successfully.")
                 st.rerun()
+    # MODIFICATION DATA LAYER: Admin interface control to publish targeted notice banners
+    with t4:
+        st.markdown("### 📢 Broadcast Notices Dispatch Center")
+        st.write("Publish dynamic tracking notification banners drawn instantly onto landlord dashboard crop positions.")
+        with st.form("broadcast_panel"):
+            notice_input_body = st.text_area("Alert Banner Message Text Content:", placeholder="Type maintenance details, pricing revisions, or portfolio compliance instructions here...")
+            
+            # Fetch profile parameters from transactional tables
+            available_landlords = ["All"] + sorted([x for x in u_df['owner_name'].unique().tolist() if x != "All"])
+            selected_audience_scope = st.selectbox("Notice Recipient Scope:", available_landlords)
+            
+            if st.form_submit_button("🚀 Deploy Notice Banner"):
+                if notice_input_body.strip():
+                    save_notification(notice_input_body.strip(), selected_audience_scope)
+                    st.success("Notice banner deployed to matching system target channels.")
+                    st.rerun()
+                else:
+                    st.error("Message body text parameter cannot evaluate blank inputs.")
+        
+        st.divider()
+        st.write("#### 🧼 Notice Flush Control Utility")
+        if st.button("🧹 Clear All Dynamic Alert Banners Everywhere", use_container_width=True):
+            purge_all_notifications()
+            st.success("All historical system alert banners flushed from production storage.")
+            st.rerun()
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Reference & Command Center")
