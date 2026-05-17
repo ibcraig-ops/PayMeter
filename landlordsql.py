@@ -356,7 +356,6 @@ def gen_building_summary_pdf(summary_df, total_metrics, period_label, portfolio_
     return bytes(pdf.output())
 
 # --- 6. DATABASE FUNCTIONS ---
-# PERFORMANCE OPTIMIZATION: Added short-lived query caching to stop database hits on every single mouse click
 @st.cache_data(ttl=300)
 def load_users():
     try:
@@ -384,7 +383,7 @@ def save_user(u, p, r, o):
         query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
         with engine.begin() as conn:
             conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
-        st.cache_data.clear() # Force immediate cache eviction to display updates
+        st.cache_data.clear()
         return True
     except Exception as database_error:
         st.error("🚨 Database Engine Rejected User Creation Entry")
@@ -467,18 +466,22 @@ def load_master_data():
         return df
     except: return pd.DataFrame()
 
+# --- FIXED DE-DUPLICATION LAYER FRAMEWORK ENGINE ---
 def update_database(f, m):
     df = pd.read_csv(f)
     df.columns = df.columns.str.strip()
     
     if m == "append":
+        blacklist_ids = set() # FIXED: Pre-initialize scope array to strictly prevent UnboundLocalErrors
         try:
             existing_records = pd.read_sql('SELECT "Unique Id" FROM transactions', engine)
-            blacklist_ids = set(existing_records['Unique Id'].dropna().tolist())
-            if 'Unique Id' in df.columns:
-                df = df[~df['Unique Id'].isin(blacklist_ids)]
+            if 'Unique Id' in existing_records.columns:
+                blacklist_ids = set(existing_records['Unique Id'].dropna().tolist())
         except Exception:
             pass
+
+        if 'Unique Id' in df.columns and blacklist_ids:
+            df = df[~df['Unique Id'].isin(blacklist_ids)]
 
     if not df.empty:
         df.to_sql("transactions", engine, if_exists=m, index=False)
@@ -571,12 +574,11 @@ if st.session_state['logged_in']:
         </div>
         """, unsafe_allow_html=True)
 
-# --- 11. PAGES TRACKING VIEW PORTS ---
+# --- 11. VIEWPORT ROUTER CONTROL LAYOUTS ---
 
 if st.session_state['current_page'] == "Dashboard":
     if working_df.empty: st.warning("No transactional database content found.")
     else:
-        # PERFORMANCE OPTIMIZATION: Heavy dataframe filtering calculations executed ONLY inside the dashboard layout viewport
         fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
         if fdf.empty: st.warning("No data matches selected timeline parameters.")
         else:
@@ -682,7 +684,6 @@ elif st.session_state['current_page'] == "Analytics":
 elif st.session_state['current_page'] == "Reporting":
     if working_df.empty: st.info("Please sync asset profiles to access report generation frameworks.")
     else:
-        # PERFORMANCE OPTIMIZATION: Sidebar extraction rules isolated locally inside page
         sb_local = sb if 'sb' in locals() else working_df['Building Detail'].unique()
         
         t1, t2, t3 = st.tabs(["📊 Financial Sales Factory", "🏢 Building Summary Report", "⚠️ Dormant Meters Audit"])
@@ -720,7 +721,7 @@ elif st.session_state['current_page'] == "Reporting":
                 m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
                 
                 st.write("#### 📑 Sales Report Data Grid Preview")
-                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
+                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:TC_CODE_2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 exp_col1, exp_col2 = st.columns(2)
