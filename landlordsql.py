@@ -36,7 +36,7 @@ try:
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
-    # HARDENED MIGRATION: Uses engine.begin() to guarantee transaction persistence via Supabase poolers
+    # HARDENED MIGRATION: Natively handle table tracking definitions
     with engine.begin() as init_conn:
         init_conn.execute(text("""
             CREATE TABLE IF NOT EXISTS notifications (
@@ -242,7 +242,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     
     return bytes(pdf.output())
 
-# --- 6. DATABASE FUNCTIONS (HARDENED VIA TRANSACTION STATE LIFECYCLES) ---
+# --- 6. DATABASE FUNCTIONS (HARDENED TRANSACTION CYCLES) ---
 def load_users():
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
@@ -265,35 +265,52 @@ def load_users():
             st.sidebar.error("❌ App Connection Failed")
             st.stop()
 
+# HARDENED: Wrapped with diagnostic output handlers to visually trap constraints or schema validation issues
 def save_user(u, p, r, o):
-    hp = hashlib.sha256(p.encode()).hexdigest()
-    query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
-    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
-    with engine.begin() as conn:
-        conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
-    return True
+    try:
+        hp = hashlib.sha256(p.encode()).hexdigest()
+        query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
+        with engine.begin() as conn:
+            conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
+        return True
+    except Exception as database_error:
+        st.error("🚨 Database Engine Rejected User Creation Entry")
+        st.exception(database_error)
+        return False
 
 def update_user_password(u, p):
-    hp = hashlib.sha256(p.encode()).hexdigest()
-    query = text("UPDATE users SET password = :p WHERE username = :u")
-    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
-    with engine.begin() as conn:
-        conn.execute(query, {"p": hp, "u": u})
-    return True
+    try:
+        hp = hashlib.sha256(p.encode()).hexdigest()
+        query = text("UPDATE users SET password = :p WHERE username = :u")
+        with engine.begin() as conn:
+            conn.execute(query, {"p": hp, "u": u})
+        return True
+    except Exception as database_error:
+        st.error("🚨 Database Engine Rejected Password Revision Request")
+        st.exception(database_error)
+        return False
 
 def delete_user(u):
-    query = text("DELETE FROM users WHERE username = :u")
-    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
-    with engine.begin() as conn:
-        conn.execute(query, {"u": u})
-    return True
+    try:
+        query = text("DELETE FROM users WHERE username = :u")
+        with engine.begin() as conn:
+            conn.execute(query, {"u": u})
+        return True
+    except Exception as database_error:
+        st.error("🚨 Database Engine Rejected Access Revocation Purge")
+        st.exception(database_error)
+        return False
 
 def save_notification(notice_text, target):
-    query = text("INSERT INTO notifications (notice_text, target_landlord) VALUES (:txt, :tgt)")
-    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
-    with engine.begin() as conn:
-        conn.execute(query, {"txt": notice_text, "tgt": target})
-    return True
+    try:
+        query = text("INSERT INTO notifications (notice_text, target_landlord) VALUES (:txt, :tgt)")
+        with engine.begin() as conn:
+            conn.execute(query, {"txt": notice_text, "tgt": target})
+        return True
+    except Exception as database_error:
+        st.error("🚨 Database Engine Rejected Broadcast Insertion Request")
+        st.exception(database_error)
+        return False
 
 def load_active_notifications(target_landlord):
     try:
@@ -305,11 +322,15 @@ def load_active_notifications(target_landlord):
         return []
 
 def purge_all_notifications():
-    query = text("TRUNCATE TABLE notifications")
-    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
-    with engine.begin() as conn:
-        conn.execute(query)
-    return True
+    try:
+        query = text("TRUNCATE TABLE notifications")
+        with engine.begin() as conn:
+            conn.execute(query)
+        return True
+    except Exception as database_error:
+        st.error("🚨 Database Engine Rejected Notice Clear Sequence")
+        st.exception(database_error)
+        return False
 
 @st.cache_data(ttl=60)
 def load_master_data():
@@ -728,34 +749,47 @@ elif st.session_state['current_page'] == "Reporting":
                         dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
+# --- 12. USER ADMINISTRATION ---
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
     t1, t2, t3, t4 = st.tabs(["Add Landlord", "Reset Password", "Delete User", "📢 Broadcast Notice"])
     with t1:
-        with st.form("create_landlord"):
-            nu, np = st.text_input("New Username"), st.text_input("Password", type="password")
+        # FIXED: Enforced clear_on_submit to streamline execution flow inside standard text inputs
+        with st.form("create_landlord", clear_on_submit=True):
+            nu = st.text_input("New Landlord Username")
+            np = st.text_input("Password", type="password")
             no = st.selectbox("Assign to Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
-            if st.form_submit_button("Create Account"): save_user(nu, np, "landlord", no); st.rerun()
+            
+            if st.form_submit_button("Create Account"):
+                if nu.strip() and np.strip():
+                    if save_user(nu.strip(), np.strip(), "landlord", no):
+                        st.toast(f"Account for '{nu}' created successfully!", icon="✔️")
+                        st.rerun()
+                else:
+                    st.error("Form Input Validation Rejection: Username and password details cannot be empty.")
     with t2:
         ur = st.selectbox("Select Account", u_df['username'].tolist())
         npw = st.text_input("New Password", type="password")
-        if st.button("Update Access"): update_user_password(ur, npw); st.success("Access Updated.")
+        if st.button("Update Access"): 
+            if update_user_password(ur, npw):
+                st.success("Access Updated.")
+                st.rerun()
     with t3:
         delete_opts = [un for un in u_df['username'].tolist() if un != "admin"]
         if not delete_opts:
             st.info("No landlord tracking sub-accounts currently available to purge.")
         else:
             ud = st.selectbox("Select Account to Delete", delete_opts)
-            st.warning(f"⚠️ Action Required: Deleting account '{ud}' will permanently revoke their portal database privileges.")
+            st.warning(f"⚠️ Action Required: Deleting account '{ud}' will permanently revoke their privileges.")
             if st.button("❌ Permanently Purge Account Access", use_container_width=True):
-                delete_user(ud)
-                st.success(f"Security Profile for account '{ud}' has been purges successfully.")
-                st.rerun()
+                if delete_user(ud):
+                    st.success(f"Security Profile for account '{ud}' has been purged successfully.")
+                    st.rerun()
     with t4:
         st.markdown("### 📢 Broadcast Notices Dispatch Center")
-        st.write("Publish dynamic tracking notification banners drawn instantly onto landlord dashboard crop positions.")
+        st.write("Publish dynamic tracking notification banners drawn instantly onto landlord dashboard positions.")
         with st.form("broadcast_panel"):
             notice_input_body = st.text_area("Alert Banner Message Text Content:", placeholder="Type maintenance details, pricing revisions, or portfolio compliance instructions here...")
             available_landlords = ["All"] + sorted([x for x in u_df['owner_name'].unique().tolist() if x != "All"])
@@ -763,18 +797,18 @@ elif st.session_state['current_page'] == "UserAdmin":
             
             if st.form_submit_button("🚀 Deploy Notice Banner"):
                 if notice_input_body.strip():
-                    save_notification(notice_input_body.strip(), selected_audience_scope)
-                    st.success("Notice banner deployed to matching system target channels.")
-                    st.rerun()
+                    if save_notification(notice_input_body.strip(), selected_audience_scope):
+                        st.success("Notice banner deployed to matching system target channels.")
+                        st.rerun()
                 else:
                     st.error("Message body text parameter cannot evaluate blank inputs.")
         
         st.divider()
         st.write("#### 🧼 Notice Flush Control Utility")
         if st.button("🧹 Clear All Dynamic Alert Banners Everywhere", use_container_width=True):
-            purge_all_notifications()
-            st.success("All historical system alert banners flushed from production storage.")
-            st.rerun()
+            if purge_all_notifications():
+                st.success("All historical system alert banners flushed from production storage.")
+                st.rerun()
 
 elif st.session_state['current_page'] == "Management":
     st.title("🛠️ Meter Reference & Command Center")
