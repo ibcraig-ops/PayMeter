@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -239,6 +240,121 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     pdf.cell(col_w[c_idx], 8, f"{total_metrics['units']:,.2f}", 1, 0, 'R', True); c_idx += 1
     pdf.cell(col_w[c_idx], 8, f"{int(total_metrics['tx_count'])}", 1, 0, 'C', True)
     
+    return bytes(pdf.output())
+
+# FEATURE: NEW INDEPENDENT PDF BUILDER ENGINE FOR PROPERTY-WISE SUB-TOTALED CONSOLIDATIONS
+def gen_building_summary_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
+    if not FPDF:
+        return None
+        
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    pdf.set_fill_color(30, 58, 138) 
+    pdf.rect(0, 0, 297, 32, 'F')
+    
+    if os.path.exists(logo_path):
+        try: pdf.image(logo_path, x=12, y=5, h=22)
+        except: pass
+            
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", 'B', 18)
+    pdf.set_xy(80, 8)
+    pdf.cell(205, 8, "EXECUTIVE BUILDING SUMMARY STATEMENT", align='R')
+    pdf.set_font("Helvetica", 'I', 10)
+    pdf.set_xy(80, 18)
+    pdf.cell(205, 5, clean_txt(f"Portfolio Scope: {portfolio_label}   |   Reporting Window: {period_label}"), align='R')
+    
+    pdf.set_text_color(51, 65, 85) 
+    pdf.set_font("Helvetica", size=9)
+    pdf.set_xy(12, 38)
+    pdf.cell(100, 5, f"Document ID: BSR-{random.randint(100000, 999999)}")
+    pdf.ln(5)
+    pdf.set_x(12)
+    pdf.cell(100, 5, f"Generated On: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    pdf.ln(9)
+    
+    pdf.set_fill_color(241, 245, 249) 
+    pdf.set_draw_color(226, 232, 240)
+    
+    pdf.rect(12, 50, 62, 18, 'DF')
+    pdf.set_xy(14, 52)
+    pdf.set_font("Helvetica", '', 8)
+    pdf.cell(58, 4, "AGGREGATE GROSS SALES")
+    pdf.set_xy(14, 57)
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.set_text_color(13, 148, 136) 
+    pdf.cell(58, 8, f"R {total_metrics['gross']:,.2f}")
+    
+    pdf.set_text_color(51, 65, 85)
+    pdf.rect(80, 50, 62, 18, 'DF')
+    pdf.set_xy(82, 52)
+    pdf.set_font("Helvetica", '', 8)
+    pdf.cell(58, 4, "AGGREGATE PRINCIPLE PAY")
+    pdf.set_xy(82, 57)
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(58, 8, f"R {total_metrics['net']:,.2f}")
+    
+    pdf.rect(148, 50, 62, 18, 'DF')
+    pdf.set_xy(150, 52)
+    pdf.set_font("Helvetica", '', 8)
+    pdf.cell(58, 4, "AGGREGATE SERVICE FEES")
+    pdf.set_xy(150, 57)
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(58, 8, f"R {total_metrics['fees']:,.2f}")
+    
+    pdf.rect(216, 50, 69, 18, 'DF')
+    pdf.set_xy(218, 52)
+    pdf.set_font("Helvetica", '', 8)
+    pdf.cell(65, 4, "AGGREGATE UNITS CONSUMED")
+    pdf.set_xy(218, 57)
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(65, 8, f"{total_metrics['units']:,.2f} Units")
+    
+    pdf.set_xy(12, 74)
+    pdf.set_font("Helvetica", 'B', 10)
+    pdf.set_text_color(30, 58, 138)
+    pdf.cell(200, 6, "PORTFOLIO BUILDING-WISE FINANCIAL SUMMARY")
+    pdf.ln(8)
+    
+    pdf.set_fill_color(30, 58, 138)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_draw_color(30, 58, 138)
+    pdf.set_font("Helvetica", 'B', 8)
+    
+    col_w = [85, 25, 30, 30, 30, 25, 28, 20]
+    headers = ["BUILDING PROPERTY LOCATION", "RESOURCE", "GROSS SALES", "PRINCIPLE PAY", "SERVICE FEES", "VAT ACCR", "UNITS", "TX COUNT"]
+    
+    pdf.set_x(12)
+    for w, h in zip(col_w, headers): pdf.cell(w, 8, h, 1, 0, 'C', True)
+    pdf.ln()
+    
+    pdf.set_text_color(51, 65, 85)
+    pdf.set_draw_color(226, 232, 240)
+    
+    for _, r in summary_df.iterrows():
+        b_name = str(r['Building Location'])
+        is_sub = "SUBTOTAL" in b_name or "GRAND TOTAL" in b_name
+        
+        pdf.set_x(12)
+        if is_sub:
+            pdf.set_font("Helvetica", 'B', 8)
+            pdf.set_fill_color(226, 232, 240)
+        else:
+            pdf.set_font("Helvetica", '', 8)
+            pdf.set_fill_color(255, 255, 255)
+            
+        pdf.cell(col_w[0], 7, clean_txt(b_name)[:48], 1, 0, 'L', True)
+        pdf.cell(col_w[1], 7, clean_txt(r['Utility Type']), 1, 0, 'C', True)
+        pdf.cell(col_w[2], 7, f"R {r['Gross Sales']:,.2f}" if isinstance(r['Gross Sales'], (int, float)) else str(r['Gross Sales']), 1, 0, 'R', True)
+        pdf.cell(col_w[3], 7, f"R {r['Net To Principle']:,.2f}" if isinstance(r['Net To Principle'], (int, float)) else str(r['Net To Principle']), 1, 0, 'R', True)
+        pdf.cell(col_w[4], 7, f"R {r['Service Fees']:,.2f}" if isinstance(r['Service Fees'], (int, float)) else str(r['Service Fees']), 1, 0, 'R', True)
+        pdf.cell(col_w[5], 7, f"R {r['VAT']:,.2f}" if isinstance(r['VAT'], (int, float)) else str(r['VAT']), 1, 0, 'R', True)
+        pdf.cell(col_w[6], 7, f"{r['Units Consumed']:,.2f}" if isinstance(r['Units Consumed'], (int, float)) else str(r['Units Consumed']), 1, 0, 'R', True)
+        pdf.cell(col_w[7], 7, f"{int(r['Transactions'])}" if isinstance(r['Transactions'], (int, float)) else str(r['Transactions']), 1, 0, 'C', True)
+        pdf.ln()
+        
     return bytes(pdf.output())
 
 # --- 6. DATABASE FUNCTIONS ---
@@ -492,7 +608,6 @@ if st.session_state['current_page'] == "Dashboard":
             
         st.divider()
         
-        # FIXED FEATURES: Performance graph updated to track Electricity vs Water distinctly side-by-side
         st.subheader("📈 Performance Trend")
         if 'Service Resource' in fdf.columns:
             trend_data = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Sum Of Total Incl Vat'].sum().reset_index()
@@ -504,7 +619,7 @@ if st.session_state['current_page'] == "Dashboard":
                 barmode='group',
                 title="Gross Revenue Split: Electricity vs Water",
                 labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period', 'Service Resource': 'Utility Resource'},
-                color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'} # Matches dashboard table theme color coding perfectly
+                color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'}
             )
         else:
             trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
@@ -613,12 +728,14 @@ elif st.session_state['current_page'] == "Analytics":
         with c3: st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Units'].sum().reset_index(), x='Year_Month_Key', y='Units', markers=True, title="Consumption Volatility Trend (Units)"), use_container_width=True)
         with c4: st.plotly_chart(px.bar(fdf.groupby('Building Detail')['Sum Of Total Incl Vat'].sum().reset_index().sort_values('Sum Of Total Incl Vat', ascending=False).head(15), y='Building Detail', x='Sum Of Total Incl Vat', orientation='h', title="Top 15 Buildings by Billings Gross"), use_container_width=True)
 
+# --- 11. REPORTING SUITE PAGE ---
 elif st.session_state['current_page'] == "Reporting":
     st.title("🗂️ Executive Reporting Suite")
     if working_df.empty:
         st.info("Please sync asset profiles to access report generation frameworks.")
     else:
-        t1, t2 = st.tabs(["📊 Financial Sales Factory", "⚠️ Dormant Meters Audit"])
+        # FIXED METHOD: Expanded multi-tab framework signature to accept the new Building Summary compilation tab
+        t1, t2, t3 = st.tabs(["📊 Financial Sales Factory", "🏢 Building Summary Report", "⚠️ Dormant Meters Audit"])
         
         with t1:
             st.markdown("### 📊 Financial Revenue & Sales Report Factory")
@@ -715,8 +832,124 @@ elif st.session_state['current_page'] == "Reporting":
                     if FPDF:
                         pdf_bytes = gen_executive_sales_report_pdf(summary_df=rpt_display.drop(columns=['Year_Month_Key'], errors='ignore'), total_metrics=totals, period_label=window_label, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
                         if pdf_bytes: st.download_button(label="📥 Export Executive PDF Statement", data=pdf_bytes, file_name=f"Executive_Sales_Report_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
-                        
+
+        # FIXED WORKFLOW TARGET: NEW BUILDING CONSOLIDATION TAB FOR MULTI-ASSET LANDLORDS
         with t2:
+            st.markdown("### 🏢 Executive Building Summary Statement Factory")
+            st.write("Generate a breakdown table grouped by property locations with automatic asset subtotals and combined portfolio grand totals.")
+            
+            local_months_b = st.multiselect(
+                "Select Reporting Months (Building summary Scope):", 
+                chron_timeline, 
+                default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline,
+                key="months_b"
+            )
+            
+            b_fdf = working_df[(working_df['Building Detail'].isin(sb if 'sb' in locals() else working_df['Building Detail'].unique())) & (working_df['Display_Month'].isin(local_months_b))]
+            
+            if b_fdf.empty:
+                st.warning("No tracking details found matching specified criteria scopes.")
+            else:
+                b_grouped = b_fdf.groupby(['Building Detail', 'Service Resource']).agg({
+                    'Sum Of Total Incl Vat': 'sum',
+                    'Payment To Principle': 'sum',
+                    'Total Service Fee Incl Vat': 'sum',
+                    'Vat': 'sum',
+                    'Units': 'sum',
+                    'Unique Id': 'count'
+                }).reset_index()
+                
+                final_rows = []
+                unique_buildings = sorted(b_grouped['Building Detail'].unique())
+                
+                for b_item in unique_buildings:
+                    b_subset = b_grouped[b_grouped['Building Detail'] == b_item]
+                    for _, row in b_subset.iterrows():
+                        final_rows.append({
+                            'Building Location': row['Building Detail'],
+                            'Utility Type': row['Service Resource'],
+                            'Gross Sales': row['Sum Of Total Incl Vat'],
+                            'Net To Principle': row['Payment To Principle'],
+                            'Service Fees': row['Total Service Fee Incl Vat'],
+                            'VAT': row['Vat'],
+                            'Units Consumed': row['Units'],
+                            'Transactions': row['Unique Id']
+                        })
+                    # Interject clean formatted property asset subtotal layer configurations
+                    final_rows.append({
+                        'Building Location': f"🏢 {b_item} - SUBTOTAL",
+                        'Utility Type': "Combined",
+                        'Gross Sales': b_subset['Sum Of Total Incl Vat'].sum(),
+                        'Net To Principle': b_subset['Payment To Principle'].sum(),
+                        'Service Fees': b_subset['Total Service Fee Incl Vat'].sum(),
+                        'VAT': b_subset['Vat'].sum(),
+                        'Units Consumed': b_subset['Units'].sum(),
+                        'Transactions': b_subset['Unique Id'].sum()
+                    })
+                    
+                totals_b = {
+                    'gross': b_grouped['Sum Of Total Incl Vat'].sum(),
+                    'net': b_grouped['Payment To Principle'].sum(),
+                    'fees': b_grouped['Total Service Fee Incl Vat'].sum(),
+                    'vat': b_grouped['Vat'].sum(),
+                    'units': b_grouped['Units'].sum(),
+                    'tx_count': b_grouped['Unique Id'].sum()
+                }
+                
+                # Append definitive terminal combined bottom boundary row 
+                final_rows.append({
+                    'Building Location': "🗃️ GRAND PORTFOLIO TOTAL",
+                    'Utility Type': "Aggregate",
+                    'Gross Sales': totals_b['gross'],
+                    'Net To Principle': totals_b['net'],
+                    'Service Fees': totals_b['fees'],
+                    'VAT': totals_b['vat'],
+                    'Units Consumed': totals_b['units'],
+                    'Transactions': totals_b['tx_count']
+                })
+                
+                b_display_df = pd.DataFrame(final_rows)
+                
+                st.divider()
+                bm1, bm2, bm3, bm4 = st.columns(4)
+                bm1.metric("Portfolio Gross Sales", f"R {totals_b['gross']:,.2f}")
+                bm2.metric("Portfolio Net Share", f"R {totals_b['net']:,.2f}")
+                bm3.metric("Portfolio Fees Revenue", f"R {totals_b['fees']:,.2f}")
+                bm4.metric("Portfolio Combined Load", f"{totals_b['units']:,.2f} Units", f"{totals_b['tx_count']} Tx")
+                
+                def highlight_subtotals(row):
+                    val = str(row['Building Location'])
+                    if "SUBTOTAL" in val:
+                        return ['background-color: #f1f5f9; font-weight: bold; color: #1e3a8a'] * len(row)
+                    elif "GRAND PORTFOLIO" in val:
+                        return ['background-color: #e2e8f0; font-weight: bold; color: #0f172a; border-top: 2px solid #94a3b8'] * len(row)
+                    return [''] * len(row)
+                    
+                st.write("#### 📑 Building Summary Statement Preview")
+                st.dataframe(b_display_df.style.apply(highlight_subtotals, axis=1).format({
+                    'Gross Sales': 'R {:,.2f}', 
+                    'Net To Principle': 'R {:,.2f}', 
+                    'Service Fees': 'R {:,.2f}', 
+                    'VAT': 'R {:,.2f}', 
+                    'Units Consumed': '{:,.2f}',
+                    'Transactions': '{:,}'
+                }), use_container_width=True)
+                
+                st.markdown("#### 📥 Document Compilation & Export Options")
+                b_exp_col1, b_exp_col2 = st.columns(2)
+                window_label_b = f"Selected Range ({len(local_months_b)} Months)" if len(local_months_b) < len(chron_timeline) else "Full Historical Portfolio Range"
+                
+                with b_exp_col1:
+                    xl_buffer_b = io.BytesIO()
+                    with pd.ExcelWriter(xl_buffer_b, engine='openpyxl') as xl_writer_b:
+                        b_display_df.to_excel(xl_writer_b, index=False, sheet_name="Building Summary Statement")
+                    st.download_button(label="📥 Export Building Statement as Excel Ledger", data=xl_buffer_b.getvalue(), file_name=f"Building_Summary_Statement_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
+                with b_exp_col2:
+                    if FPDF:
+                        pdf_bytes_b = gen_building_summary_pdf(summary_df=b_display_df, total_metrics=totals_b, period_label=window_label_b, portfolio_label=str(st.session_state['sel_owner']), logo_path="logo.png")
+                        if pdf_bytes_b: st.download_button(label="📥 Export Executive Building PDF Summary", data=pdf_bytes_b, file_name=f"Building_Summary_Statement_{datetime.now().strftime('%Y%m%d')}.pdf", use_container_width=True)
+                        
+        with t3:
             st.markdown("### ⚠️ Dormant Meters Audit Suite")
             st.write("Identify operational meters that have registered absolute zero sales transactions across your historical ledger data files.")
             
@@ -761,6 +994,7 @@ elif st.session_state['current_page'] == "Reporting":
                         dormant_display.to_excel(xl_wr_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
+# --- 12. USER ADMINISTRATION ---
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
