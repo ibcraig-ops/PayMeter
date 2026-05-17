@@ -36,8 +36,8 @@ try:
     clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
     engine = create_engine(clean_url, pool_pre_ping=True)
 
-    # AUTOMATED MIGRATION: Ensure notice vault infrastructure tables are provisioned in database
-    with engine.connect() as init_conn:
+    # HARDENED MIGRATION: Uses engine.begin() to guarantee transaction persistence via Supabase poolers
+    with engine.begin() as init_conn:
         init_conn.execute(text("""
             CREATE TABLE IF NOT EXISTS notifications (
                 id SERIAL PRIMARY KEY,
@@ -46,7 +46,6 @@ try:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
-        init_conn.commit()
 
 except Exception as e:
     st.error("🚨 System Connection Traceback Error Logged:")
@@ -243,7 +242,7 @@ def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, port
     
     return bytes(pdf.output())
 
-# --- 6. DATABASE FUNCTIONS ---
+# --- 6. DATABASE FUNCTIONS (HARDENED VIA TRANSACTION STATE LIFECYCLES) ---
 def load_users():
     try:
         df = pd.read_sql("SELECT * FROM users", engine)
@@ -269,32 +268,31 @@ def load_users():
 def save_user(u, p, r, o):
     hp = hashlib.sha256(p.encode()).hexdigest()
     query = text("INSERT INTO users (username, password, role, owner_name) VALUES (:u, :p, :r, :o)")
-    with engine.connect() as conn:
+    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
+    with engine.begin() as conn:
         conn.execute(query, {"u": u, "p": hp, "r": r, "o": o})
-        conn.commit()
     return True
 
 def update_user_password(u, p):
     hp = hashlib.sha256(p.encode()).hexdigest()
     query = text("UPDATE users SET password = :p WHERE username = :u")
-    with engine.connect() as conn:
+    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
+    with engine.begin() as conn:
         conn.execute(query, {"p": hp, "u": u})
-        conn.commit()
     return True
 
 def delete_user(u):
     query = text("DELETE FROM users WHERE username = :u")
-    with engine.connect() as conn:
+    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
+    with engine.begin() as conn:
         conn.execute(query, {"u": u})
-        conn.commit()
     return True
 
-# FEATURE FUNCTIONS: Notification data handlers
 def save_notification(notice_text, target):
     query = text("INSERT INTO notifications (notice_text, target_landlord) VALUES (:txt, :tgt)")
-    with engine.connect() as conn:
+    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
+    with engine.begin() as conn:
         conn.execute(query, {"txt": notice_text, "tgt": target})
-        conn.commit()
     return True
 
 def load_active_notifications(target_landlord):
@@ -308,9 +306,9 @@ def load_active_notifications(target_landlord):
 
 def purge_all_notifications():
     query = text("TRUNCATE TABLE notifications")
-    with engine.connect() as conn:
+    # FIXED: Uses engine.begin() context to guarantee physical commit execution through poolers
+    with engine.begin() as conn:
         conn.execute(query)
-        conn.commit()
     return True
 
 @st.cache_data(ttl=60)
@@ -412,7 +410,6 @@ else:
     with st.sidebar:
         if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
 
-
 # --- 10. PREMIUM TOP-OF-PAGE NOTIFICATION LAYER ---
 if st.session_state['logged_in']:
     target_scope = st.session_state['assigned_owner'] if st.session_state['user_role'] == 'landlord' else 'All'
@@ -425,7 +422,6 @@ if st.session_state['logged_in']:
             <span style="color: #78350f; font-size: 13.5px; margin-left: 6px; font-weight: 500;">{alert_msg}</span>
         </div>
         """, unsafe_allow_html=True)
-
 
 # --- 11. VIEWPORT PAGES CONTROLLER ROUTER ---
 
@@ -445,7 +441,7 @@ if st.session_state['current_page'] == "Dashboard":
         t_sales = e_sales + w_sales
         t_units = e_units + w_units
         
-        st.write("#### 📊 Period Performance Summary Summary Matrix")
+        st.write("#### 📊 Period Performance Summary Matrix")
         
         html_matrix = f"""
         <table style="width:100%; border-collapse: collapse; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px;">
@@ -477,6 +473,7 @@ if st.session_state['current_page'] == "Dashboard":
             
         st.divider()
         
+        # 1. PERFORMANCE TREND BAR GRAPH
         st.subheader("📈 Performance Trend")
         trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
         st.plotly_chart(px.bar(
@@ -735,7 +732,6 @@ elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
-    # MODIFICATION: Added 4th Broadcast notice workspace layout control container tab
     t1, t2, t3, t4 = st.tabs(["Add Landlord", "Reset Password", "Delete User", "📢 Broadcast Notice"])
     with t1:
         with st.form("create_landlord"):
@@ -757,14 +753,11 @@ elif st.session_state['current_page'] == "UserAdmin":
                 delete_user(ud)
                 st.success(f"Security Profile for account '{ud}' has been purges successfully.")
                 st.rerun()
-    # MODIFICATION DATA LAYER: Admin interface control to publish targeted notice banners
     with t4:
         st.markdown("### 📢 Broadcast Notices Dispatch Center")
         st.write("Publish dynamic tracking notification banners drawn instantly onto landlord dashboard crop positions.")
         with st.form("broadcast_panel"):
             notice_input_body = st.text_area("Alert Banner Message Text Content:", placeholder="Type maintenance details, pricing revisions, or portfolio compliance instructions here...")
-            
-            # Fetch profile parameters from transactional tables
             available_landlords = ["All"] + sorted([x for x in u_df['owner_name'].unique().tolist() if x != "All"])
             selected_audience_scope = st.selectbox("Notice Recipient Scope:", available_landlords)
             
