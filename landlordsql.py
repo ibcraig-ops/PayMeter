@@ -69,6 +69,13 @@ def clean_txt(val):
     """Safeguards FPDF canvas by scrubbing unencodable unicode special characters."""
     return str(val).encode('latin-1', 'replace').decode('latin-1')
 
+def norm_id(val):
+    """Safely normalizes alphanumeric or float distorted tracking IDs uniformly."""
+    s = str(val).strip()
+    if s.endswith('.0'):
+        return s[:-2]
+    return s
+
 def gen_p(df, title):
     """Generates standard byte outputs for dashboard pdf fragments."""
     pdf = FPDF(orientation='L'); pdf.add_page(); pdf.set_font("Helvetica", 'B', 14)
@@ -458,11 +465,17 @@ def clear_transaction_history():
         st.cache_data.clear()
         return True
 
+# FIXED ENGINE CORRECTION LAYER: Automatically scrub trailing decimals from meter numbers on retrieval
 @st.cache_data(ttl=60)
 def load_master_data():
     try:
         df = pd.read_sql("SELECT * FROM transactions", engine)
         if df.empty: return df
+        
+        # Scrub trailing float decimals from meter column fields globally prior to workspace assembly
+        if 'Meter Number' in df.columns:
+            df['Meter Number'] = df['Meter Number'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+            
         df['Units'] = pd.to_numeric(df['Units'], errors='coerce').fillna(0)
         df['Sum Of Total Incl Vat'] = pd.to_numeric(df['Sum Of Total Incl Vat'], errors='coerce').fillna(0)
         df['Payment To Principle'] = pd.to_numeric(df['Payment To Principle'], errors='coerce').fillna(0)
@@ -477,11 +490,10 @@ def load_master_data():
         df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m').fillna("Unknown Period")
         df['Month'] = df['Trans_date'].dt.strftime('%B').fillna("Unknown Month")
         df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str).fillna("")
-        df['Meter_Search'] = df['Meter Number'].astype(str).str.strip()
+        df['Meter_Search'] = df['Meter Number']
         return df
     except: return pd.DataFrame()
 
-# --- ULTRA-RELIABLE, ZERO-FILTER NATIVE DATABASE DIRECT SYNCHRONIZER ENGINE ---
 def update_database(f, m):
     try:
         df = pd.read_csv(f)
@@ -502,6 +514,10 @@ def update_database(f, m):
         df.columns = df.columns.str.strip().str.lower()
         df = df.rename(columns=col_map)
         
+        if 'Unique Id' in df.columns:
+            df = df.dropna(subset=['Unique Id'])
+            df['Unique Id'] = df['Unique Id'].apply(norm_id)
+            
         if df.empty:
             st.sidebar.warning("⚠️ Uploaded file template contains zero rows.")
             return
@@ -511,7 +527,6 @@ def update_database(f, m):
                 df.to_sql("transactions", conn, if_exists="replace", index=False)
                 st.sidebar.success(f"🚀 Overwrote data suite with {len(df)} rows.")
             else:
-                # Pure, direct database append operations. No custom filtering logic to glitch out.
                 df.to_sql("transactions", conn, if_exists="append", index=False)
                 st.sidebar.success(f"🚀 Appended {len(df)} lines successfully!")
                 
@@ -813,7 +828,7 @@ elif st.session_state['current_page'] == "Reporting":
                 window_label_b = f"Selected Range ({len(local_months_b)} Months)" if len(local_months_b) < len(chron_timeline) else "Full Historical Portfolio Range"
                 with b_exp_col1:
                     xl_buffer_b = io.BytesIO()
-                    with pd.ExcelWriter(xl_buffer_b, engine='openpyxl') as xl_writer_b: b_display_df.to_excel(xl_writer_b, index=False, sheet_name="Building Summary Statement")
+                    with pd.ExcelWriter(xl_buffer_b, engine='openpyxl') as xl_writer_b: b_display_df.to_excel(xl_buffer_b, index=False, sheet_name="Building Summary Statement")
                     st.download_button(label="📥 Export Building Statement as Excel Ledger", data=xl_buffer_b.getvalue(), file_name=f"Building_Summary_Statement_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
                 with b_exp_col2:
                     if FPDF:
