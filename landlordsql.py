@@ -385,6 +385,16 @@ def load_users():
             st.error("❌ App Connection Failed")
             st.stop()
 
+# HIGH-SPEED OPTIMIZATION: Query ONLY distinct owner string arrays to avoid loading whole dataframes into memory
+@st.cache_data(ttl=300)
+def get_unique_owners():
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(text('SELECT DISTINCT "Owner Detail" FROM transactions WHERE "Owner Detail" IS NOT NULL')).fetchall()
+        return sorted([r[0] for r in res])
+    except:
+        return []
+
 def save_user(u, p, r, o):
     try:
         hp = hashlib.sha256(p.encode()).hexdigest()
@@ -465,10 +475,17 @@ def clear_transaction_history():
         st.cache_data.clear()
         return True
 
+# HIGH-SPEED OPTIMIZATION: Implemented database-level filtering to avoid downloading unassigned records
 @st.cache_data(ttl=60)
-def load_master_data():
+def load_master_data(sel_owner):
     try:
-        df = pd.read_sql("SELECT * FROM transactions", engine)
+        if sel_owner == "All Owners":
+            df = pd.read_sql("SELECT * FROM transactions", engine)
+        else:
+            query = text('SELECT * FROM transactions WHERE "Owner Detail" = :owner')
+            with engine.connect() as conn:
+                df = pd.read_sql(query, conn, params={"owner": sel_owner})
+                
         if df.empty: return df
         
         if 'Meter Number' in df.columns:
@@ -558,8 +575,6 @@ if not st.session_state['logged_in']:
     st.stop()
 
 # --- 8. NAVIGATION & BASE SIDEBAR ---
-raw_df = load_master_data()
-
 with st.sidebar:
     st.success("✔️ Connected to Database")
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
@@ -587,25 +602,26 @@ with st.sidebar:
         st.session_state['current_page'] = "UserAdmin"
     
     st.divider()
-    if not raw_df.empty and st.session_state['user_role'] == 'admin':
-        opts = ["All Owners"] + sorted(raw_df['Owner Detail'].unique().tolist())
+    if st.session_state['user_role'] == 'admin':
+        opts = ["All Owners"] + get_unique_owners()
         st.session_state['sel_owner'] = st.selectbox("View Portfolio Scope:", opts)
 
-# --- 9. SIDEBAR CONTROL CONTROLLERS ---
-working_df = raw_df if st.session_state['sel_owner'] == "All Owners" else raw_df[raw_df['Owner Detail'] == st.session_state['sel_owner']]
-
-chron_timeline = []
-selected_months = []
-
-if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting"]:
+# --- 9. HIGH-SPEED OPTIMIZATION: LAZY DATASET FILTER ROUTING PORTS ---
+if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting", "Management"]:
+    working_df = load_master_data(st.session_state['sel_owner'])
+    
+    sb = []
+    selected_months = []
     if not working_df.empty:
-        with st.sidebar:
-            st.markdown("### 🔍 Live Dataset Filters")
-            sb = st.multiselect("Filter Asset Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
-            chron_timeline = working_df.sort_values('Year_Month_Key')['Display_Month'].unique().tolist()
-            selected_months = st.multiselect("Filter Months/Years", chron_timeline, default=chron_timeline)
-            st.divider()
-            if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+        if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting"]:
+            with st.sidebar:
+                st.markdown("### 🔍 Live Dataset Filters")
+                sb = st.multiselect("Filter Asset Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
+                chron_timeline = working_df.sort_values('Year_Month_Key')['Display_Month'].unique().tolist()
+                selected_months = st.multiselect("Filter Months/Years", chron_timeline, default=chron_timeline)
+                st.divider()
+                if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
 else:
     with st.sidebar:
         if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
@@ -628,7 +644,6 @@ if st.session_state['logged_in']:
 if st.session_state['current_page'] == "Dashboard":
     if working_df.empty: st.warning("No transactional database content found.")
     else:
-        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
         if fdf.empty: st.warning("No data matches selected timeline parameters.")
         else:
             st.title(f"🏢 {st.session_state['sel_owner']} Overview")
@@ -693,7 +708,6 @@ if st.session_state['current_page'] == "Dashboard":
             summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
             st.dataframe(summary_with_total.style.format({'Sales': 'R {:,.2f}', 'Consumption': '{:,.2f}', 'Meters': '{:,}', 'Transactions': '{:,}'}), use_container_width=True)
             
-            # FIXED EXTRACTION LIFECYCLES: Removed with ExcelWriter context blocks globally across entire file
             c1, c2 = st.columns(2)
             with c1:
                 xl = io.BytesIO()
@@ -719,7 +733,6 @@ if st.session_state['current_page'] == "Dashboard":
 elif st.session_state['current_page'] == "Analytics":
     if working_df.empty: st.warning("No tracking records available to compute visuals.")
     else:
-        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
         st.title("📈 Strategic Portfolio Analytics")
         if fdf.empty: st.warning("Select filters from the sidebar to build dynamic charts.")
         else:
@@ -734,8 +747,6 @@ elif st.session_state['current_page'] == "Analytics":
 elif st.session_state['current_page'] == "Reporting":
     if working_df.empty: st.info("Please sync asset profiles to access report generation frameworks.")
     else:
-        sb_local = sb if 'sb' in locals() else working_df['Building Detail'].unique()
-        
         t1, t2, t3 = st.tabs(["📊 Financial Sales Factory", "🏢 Building Summary Report", "⚠️ Dormant Meters Audit"])
         
         with t1:
@@ -745,7 +756,7 @@ elif st.session_state['current_page'] == "Reporting":
             with rc1: local_months_selected = st.multiselect("Filter Active Report Months:", chron_timeline, default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline)
             with rc2: consolidation_mode = st.selectbox("Meter Rows Grouping Structure:", ["Consolidate Total for Selected Period", "Split by Month Rows"])
                 
-            rpt_fdf = working_df[(working_df['Building Detail'].isin(sb_local)) & (working_df['Display_Month'].isin(local_months_selected))]
+            rpt_fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(local_months_selected))]
             if rpt_fdf.empty: st.warning("No data rows locate within current selections.")
             else:
                 group_cols = []
@@ -776,7 +787,6 @@ elif st.session_state['current_page'] == "Reporting":
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 exp_col1, exp_col2 = st.columns(2)
                 window_label = f"Selected Range ({len(local_months_selected)} Months)" if len(local_months_selected) < len(chron_timeline) else "Full Historical Portfolio Range"
-                # FIXED EXTRACTION LIFECYCLES: Removed ExcelWriter context manager block logic for direct generation
                 with exp_col1:
                     xl_buffer = io.BytesIO()
                     rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').to_excel(xl_buffer, index=False, sheet_name="Sales Summary Report")
@@ -789,7 +799,7 @@ elif st.session_state['current_page'] == "Reporting":
         with t2:
             st.markdown("### 🏢 Executive Building Summary Statement Factory")
             local_months_b = st.multiselect("Select Reporting Months (Building Summary Scope):", chron_timeline, default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline, key="months_b")
-            b_fdf = working_df[(working_df['Building Detail'].isin(sb_local)) & (working_df['Display_Month'].isin(local_months_b))]
+            b_fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(local_months_b))]
             
             if b_fdf.empty: st.warning("No tracking details found matching specified criteria scopes.")
             else:
@@ -826,7 +836,6 @@ elif st.session_state['current_page'] == "Reporting":
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 b_exp_col1, b_exp_col2 = st.columns(2)
                 window_label_b = f"Selected Range ({len(local_months_b)} Months)" if len(local_months_b) < len(chron_timeline) else "Full Historical Portfolio Range"
-                # FIXED EXTRACTION LIFECYCLES: Removed ExcelWriter context manager block logic for direct generation
                 with b_exp_col1:
                     xl_buffer_b = io.BytesIO()
                     b_display_df.to_excel(xl_buffer_b, index=False, sheet_name="Building Summary")
@@ -838,7 +847,7 @@ elif st.session_state['current_page'] == "Reporting":
                         
         with t3:
             st.markdown("### ⚠️ Dormant Meters Audit Suite")
-            dorm_base = working_df[working_df['Building Detail'].isin(sb_local)]
+            dorm_base = working_df[working_df['Building Detail'].isin(sb)]
             if dorm_base.empty: st.warning("No tracking records exist mapping back to this building context sequence.")
             else:
                 lookback_days = st.slider("Define Dormancy Threshold (Days of Continuous Inactivity):", min_value=15, max_value=120, value=60, step=5)
@@ -854,9 +863,8 @@ elif st.session_state['current_page'] == "Reporting":
                 if dormant_display.empty: st.success(f"🎉 Complete structural activity verified! Zero meters exceed the {lookback_days}-day lookup constraints.")
                 else:
                     st.dataframe(dormant_display.style.format({'Last Successful Purchase': lambda x: x.strftime('%Y-%m-%d %H:%M') if not pd.isna(x) else ''}), use_container_width=True)
-                    # FIXED EXTRACTION LIFECYCLES: Removed ExcelWriter context manager block logic for direct generation
                     xl_buf_dorm = io.BytesIO()
-                    dormant_display.to_excel(xl_buf_dorm, index=False, sheet_name="Dormant Inactive Meters")
+                    disabled_by_base = dormant_display.to_excel(xl_buf_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
@@ -873,7 +881,8 @@ elif st.session_state['current_page'] == "UserAdmin":
         with st.form("create_landlord", clear_on_submit=True):
             nu = st.text_input("New Landlord Username")
             np = st.text_input("Password", type="password")
-            no = st.selectbox("Assign to Owner", ["All"] + sorted(raw_df['Owner Detail'].unique().tolist()) if not raw_df.empty else ["All"])
+            # OPTIMIZATION: Swapped heavy dataframe scanning for fast direct caching unique collector
+            no = st.selectbox("Assign to Owner", ["All"] + get_unique_owners())
             if st.form_submit_button("Create Account"):
                 if nu.strip() and np.strip():
                     if save_user(nu.strip(), np.strip(), "landlord", no): st.toast(f"Account for '{nu}' created successfully!", icon="✔️"); st.rerun()
@@ -895,7 +904,7 @@ elif st.session_state['current_page'] == "UserAdmin":
         st.markdown("### 📢 Broadcast Notices Dispatch Center")
         with st.form("broadcast_panel"):
             notice_input_body = st.text_area("Alert Banner Message Text Content:", placeholder="Type maintenance details, pricing revisions, or portfolio compliance instructions here...")
-            available_landlords = ["All"] + sorted([x for x in u_df['owner_name'].unique().tolist() if x != "All"])
+            available_landlords = ["All"] + get_unique_owners()
             selected_audience_scope = st.selectbox("Notice Recipient Scope:", available_landlords)
             if st.form_submit_button("🚀 Deploy Notice Banner"):
                 if notice_input_body.strip():
